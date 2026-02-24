@@ -1,0 +1,288 @@
+import { Slide, Photo, Property } from 'shared';
+import { photoUrl } from '../lib/api';
+import { PDF, LINE_HEIGHT_MM, CHAR_WIDTH_MM, formatPrice } from 'shared';
+
+const PREVIEW_WIDTH = 520;
+const SCALE = PREVIEW_WIDTH / PDF.PAGE_WIDTH_MM;
+function px(mm: number) { return Math.round(mm * SCALE); }
+function pt(points: number) { return px(points * 0.353); }
+
+// ─── Overflow detection (same logic as server) ───────────────────────────────
+
+function estimateTextHeight(paragraphs: string[], colWidthMm: number): number {
+  const cpl = Math.floor(colWidthMm / CHAR_WIDTH_MM);
+  let lines = 0;
+  for (const para of paragraphs) {
+    for (const line of para.split('\n')) {
+      lines += Math.max(1, Math.ceil(line.length / cpl));
+    }
+    lines += 0.5;
+  }
+  return lines * LINE_HEIGHT_MM;
+}
+
+// ─── Styles ──────────────────────────────────────────────────────────────────
+
+const S = {
+  slide: {
+    width: PREVIEW_WIDTH, height: px(PDF.PAGE_HEIGHT_MM),
+    backgroundColor: '#fff',
+    padding: `${px(PDF.MARGIN_TOP_MM)}px ${px(PDF.MARGIN_RIGHT_MM)}px ${px(PDF.MARGIN_BOTTOM_MM)}px ${px(PDF.MARGIN_LEFT_MM)}px`,
+    fontFamily: 'Arial, Helvetica, sans-serif',
+    overflow: 'hidden' as const, boxSizing: 'border-box' as const,
+    display: 'flex', flexDirection: 'column' as const, flexShrink: 0,
+  },
+  body: { display: 'flex', flex: 1, gap: px(PDF.COLUMN_GAP_MM), overflow: 'hidden' },
+  textCol: { width: px(PDF.TEXT_COLUMN_WIDTH_MM), overflow: 'hidden', flexShrink: 0 },
+  textColFull: { width: px(PDF.CONTENT_WIDTH_MM), overflow: 'hidden' },
+  photosCol: {
+    width: px(PDF.PHOTO_COLUMN_WIDTH_MM), flexShrink: 0,
+    display: 'flex', flexDirection: 'column' as const, gap: px(PDF.PHOTO_GAP_MM),
+    alignItems: 'flex-end' as const, justifyContent: 'center' as const,
+  },
+  photoFrame: { width: px(PDF.PHOTO_WIDTH_MM), height: px(PDF.PHOTO_HEIGHT_MM), overflow: 'hidden', flexShrink: 0 },
+  img: { width: '100%', height: '100%', objectFit: 'cover' as const, objectPosition: 'center', display: 'block' },
+  noPhoto: { width: '100%', height: '100%', background: '#eee' } as React.CSSProperties,
+};
+
+import React from 'react';
+
+function PhotosColumn({ photos }: { photos: Photo[] }) {
+  // Если только 1 фото — одно крупное по центру
+  if (photos.length === 1 && photos[0]) {
+    return (
+      <div style={{ ...S.photosCol, justifyContent: 'center' }}>
+        <div style={S.photoFrame}>
+          <img src={photoUrl(photos[0].filename)} alt="" style={S.img} />
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={S.photosCol}>
+      {[0, 1].map(i => (
+        <div key={i} style={S.photoFrame}>
+          {photos[i] ? <img src={photoUrl(photos[i].filename)} alt="" style={S.img} /> : <div style={S.noPhoto} />}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Title slide ──────────────────────────────────────────────────────────────
+
+function TitleSlide({ property, photos }: { property: Property; photos: Photo[] }) {
+  const tableRows = [
+    { label: 'Площадь',    value: property.area },
+    { label: 'Этаж',       value: property.floor },
+    { label: 'Отделка',    value: property.finish },
+    { label: 'Срок сдачи', value: property.deliveryDate },
+    ...(property.extraFields ?? []).filter(f => f.label.trim() && f.value.trim()),
+  ].filter(r => r.value?.trim());
+
+  const priceFormatted = property.price ? formatPrice(property.price) : '';
+
+  return (
+    <div style={S.slide}>
+      <div style={{ display: 'flex', flex: 1, gap: px(PDF.COLUMN_GAP_MM), overflow: 'hidden' }}>
+
+        {/* LEFT */}
+        <div style={{ width: px(PDF.TITLE_TEXT_WIDTH_MM), flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ fontWeight: 'bold', fontSize: pt(PDF.FONT_SIZE_NAME), color: PDF.COLOR_TEXT, lineHeight: 1.2, marginBottom: px(3), textTransform: 'uppercase' }}>
+            {property.name || 'Название объекта'}
+          </div>
+          {property.address && (
+            <div style={{ fontSize: pt(PDF.FONT_SIZE_SUB), color: '#444', lineHeight: 1.4, marginBottom: px(1.5) }}>{property.address}</div>
+          )}
+          {property.metro && (
+            <div style={{ fontSize: pt(PDF.FONT_SIZE_SUB), color: '#444', lineHeight: 1.4, marginBottom: px(1.5) }}>{property.metro}</div>
+          )}
+          {priceFormatted && (
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: PDF.COLOR_PRICE_BADGE, color: '#fff',
+              fontSize: pt(PDF.FONT_SIZE_PRICE), fontWeight: 'bold',
+              padding: `${px(3)}px ${px(4)}px`,
+              marginTop: px(2), marginBottom: px(3), textAlign: 'center',
+            }}>
+              {priceFormatted}
+            </div>
+          )}
+          {tableRows.length > 0 && (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <tbody>
+                {tableRows.map((r, i) => (
+                  <tr key={i} style={{ background: i % 2 === 0 ? PDF.COLOR_TABLE_BG : '#fff' }}>
+                    <td style={{ padding: `${px(2.5)}px ${px(4)}px`, color: '#555', fontSize: pt(PDF.FONT_SIZE_TABLE_LABEL), width: '44%', verticalAlign: 'middle' }}>{r.label}</td>
+                    <td style={{ padding: `${px(2.5)}px ${px(4)}px`, fontWeight: 'bold', fontSize: pt(PDF.FONT_SIZE_TABLE_VALUE), verticalAlign: 'middle' }}>{r.value}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* RIGHT: 2 photos */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: px(PDF.PHOTO_GAP_MM), alignItems: 'flex-end', justifyContent: 'center' }}>
+          {[0, 1].map(i => (
+            <div key={i} style={{ width: '100%', height: px(PDF.PHOTO_HEIGHT_MM), overflow: 'hidden', flexShrink: 0 }}>
+              {photos[i] ? <img src={photoUrl(photos[i].filename)} alt="" style={S.img} /> : <div style={S.noPhoto} />}
+            </div>
+          ))}
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
+// ─── Advantages slide ─────────────────────────────────────────────────────────
+
+function AdvantagesSlide({ advantages, photos }: { advantages: string[]; photos: Photo[] }) {
+  const totalLines = advantages.length * 1.8;
+  const maxLines = PDF.CONTENT_HEIGHT_MM / LINE_HEIGHT_MM * 0.85;
+  const fontSize = totalLines > maxLines ? PDF.FONT_SIZE_BULLET - 1 : PDF.FONT_SIZE_BULLET;
+
+  // Заголовок внутри текстовой колонки, чтобы фото занимали полную высоту
+  return (
+    <div style={S.slide}>
+      <div style={S.body}>
+        <div style={S.textCol}>
+          <div style={{ fontWeight: 'bold', fontSize: pt(PDF.FONT_SIZE_HEADING), color: PDF.COLOR_TEXT, marginBottom: px(4), letterSpacing: '0.3px' }}>
+            ПРЕИМУЩЕСТВА
+          </div>
+          <ul style={{ listStyle: 'disc', paddingLeft: px(5), fontSize: pt(fontSize), lineHeight: PDF.LINE_HEIGHT }}>
+            {advantages.map((a, i) => (
+              <li key={i} style={{ marginBottom: px(2.5) }}>{a}</li>
+            ))}
+          </ul>
+        </div>
+        <PhotosColumn photos={photos} />
+      </div>
+    </div>
+  );
+}
+
+// ─── Content slide ────────────────────────────────────────────────────────────
+
+function ContentSlide({ paragraphs, photos }: { paragraphs: string[]; photos: Photo[] }) {
+  const heightEst = estimateTextHeight(paragraphs, PDF.TEXT_COLUMN_WIDTH_MM);
+  const overflow = heightEst > PDF.CONTENT_HEIGHT_MM * 0.95;
+  const fontSize = overflow ? PDF.FONT_SIZE_BODY - 1 : PDF.FONT_SIZE_BODY;
+
+  return (
+    <div style={S.slide}>
+      <div style={S.body}>
+        <div style={S.textCol}>
+          {paragraphs.map((p, i) => (
+            <p key={i} style={{ fontSize: pt(fontSize), marginBottom: px(5), lineHeight: PDF.LINE_HEIGHT, textAlign: 'left', whiteSpace: 'pre-wrap' }}>{p}</p>
+          ))}
+        </div>
+        <PhotosColumn photos={photos} />
+      </div>
+    </div>
+  );
+}
+
+// ─── Fullscreen / floor plan ──────────────────────────────────────────────────
+
+function FullscreenSlide({ photo }: { photo?: Photo }) {
+  const pad = px(PDF.FULLSCREEN_PADDING_MM);
+  return (
+    <div style={{ ...S.slide, padding: pad }}>
+      {photo ? <img src={photoUrl(photo.filename)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{ width: '100%', height: '100%', background: '#ddd' }} />}
+    </div>
+  );
+}
+
+// ─── Full-text slide (font чуть крупнее) ─────────────────────────────────────
+
+function FullTextSlide({ paragraphs }: { paragraphs: string[] }) {
+  const heightEst = estimateTextHeight(paragraphs, PDF.CONTENT_WIDTH_MM);
+  const overflow = heightEst > PDF.CONTENT_HEIGHT_MM * 0.95;
+  const fontSize = overflow ? PDF.FONT_SIZE_BODY : PDF.FONT_SIZE_BODY_FULL;
+
+  return (
+    <div style={S.slide}>
+      <div style={S.textColFull}>
+        {paragraphs.map((p, i) => (
+          <p key={i} style={{ fontSize: pt(fontSize), marginBottom: px(5), lineHeight: PDF.LINE_HEIGHT, textAlign: 'left', whiteSpace: 'pre-wrap' }}>{p}</p>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Photo grid 2×2 ──────────────────────────────────────────────────────────
+
+function PhotoGridSlide({ photos }: { photos: Photo[] }) {
+  // 3 фото: третье по центру (span 2 cols, max-width 50%)
+  if (photos.length === 3) {
+    return (
+      <div style={S.slide}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gridTemplateRows: '1fr 1fr', gap: px(PDF.GRID_GAP_MM), width: '100%', flex: 1 }}>
+          <div style={{ overflow: 'hidden' }}>
+            <img src={photoUrl(photos[0].filename)} alt="" style={S.img} />
+          </div>
+          <div style={{ overflow: 'hidden' }}>
+            <img src={photoUrl(photos[1].filename)} alt="" style={S.img} />
+          </div>
+          <div style={{ overflow: 'hidden', gridColumn: '1 / -1', maxWidth: '50%', justifySelf: 'center' }}>
+            <img src={photoUrl(photos[2].filename)} alt="" style={S.img} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={S.slide}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gridTemplateRows: '1fr 1fr', gap: px(PDF.GRID_GAP_MM), width: '100%', flex: 1 }}>
+        {[0, 1, 2, 3].map(i => (
+          <div key={i} style={{ overflow: 'hidden' }}>
+            {photos[i] ? <img src={photoUrl(photos[i].filename)} alt="" style={S.img} /> : <div style={{ width: '100%', height: '100%', background: '#f0f0f0' }} />}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Main export ──────────────────────────────────────────────────────────────
+
+const LABELS: Record<string, string> = {
+  title: 'Титульный', advantages: 'Преимущества', content: 'Контент',
+  fullscreen: 'Полный экран', floorplan: 'Планировка',
+  'photo-grid': 'Фото-сетка', 'full-text': 'Только текст',
+};
+
+interface Props { slide: Slide; property: Property; photoMap: Map<string, Photo>; index: number; }
+
+export default function SlidePreview({ slide, property, photoMap, index }: Props) {
+  const photos = slide.photoIds.map(id => photoMap.get(id)).filter(Boolean) as Photo[];
+
+  const inner = () => {
+    switch (slide.type) {
+      case 'title':      return <TitleSlide property={property} photos={photos} />;
+      case 'advantages': return <AdvantagesSlide advantages={property.advantages} photos={photos} />;
+      case 'content':    return <ContentSlide paragraphs={slide.paragraphs ?? []} photos={photos} />;
+      case 'fullscreen': return <FullscreenSlide photo={photos[0]} />;
+      case 'floorplan':  return <FullscreenSlide photo={photos[0]} />;
+      case 'full-text':  return <FullTextSlide paragraphs={slide.paragraphs ?? []} />;
+      case 'photo-grid': return <PhotoGridSlide photos={photos} />;
+      default: return null;
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="text-xs text-gray-400 flex items-center gap-1.5">
+        <span className="bg-gray-200 text-gray-600 rounded px-1.5 py-0.5 font-mono">{index + 1}</span>
+        <span>{LABELS[slide.type] ?? slide.type}</span>
+      </div>
+      <div className="border border-gray-200 rounded-lg overflow-hidden shadow-sm" style={{ width: PREVIEW_WIDTH }}>
+        {inner()}
+      </div>
+    </div>
+  );
+}
