@@ -1,5 +1,7 @@
 import { Property, Photo, Slide, SlideType, LayoutResult } from 'shared';
 import { LINE_HEIGHT_MM, CHARS_PER_LINE_CONTENT, CHARS_PER_LINE_FULLTEXT, PDF } from 'shared';
+
+const PARAGRAPH_MARGIN_LINES = PDF.PARAGRAPH_MARGIN_MM / LINE_HEIGHT_MM; // ≈0.33
 import { v4 as uuid } from 'uuid';
 
 // ─── Paragraph fitting ───────────────────────────────────────────────────────
@@ -8,13 +10,13 @@ import { v4 as uuid } from 'uuid';
  * Оценивает количество строк, которые займёт абзац в колонке заданной ширины
  */
 function estimateParagraphLines(paragraph: string, charsPerLine: number): number {
-  if (!paragraph.trim()) return 0.5; // пустой абзац = половина строки (отступ)
+  if (!paragraph.trim()) return PARAGRAPH_MARGIN_LINES;
   const hardLines = paragraph.split('\n');
   let totalLines = 0;
   for (const line of hardLines) {
     totalLines += Math.max(1, Math.ceil(line.length / charsPerLine));
   }
-  return totalLines + 0.5; // +0.5 на нижний отступ абзаца
+  return totalLines + PARAGRAPH_MARGIN_LINES;
 }
 
 /**

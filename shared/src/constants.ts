@@ -55,14 +55,17 @@ export const PDF = {
   FONT_SIZE_PRICE: 28,       // Стоимость в бейдже
   FONT_SIZE_BULLET: 20,      // Буллеты преимуществ
   FONT_SIZE_SUB: 20,         // Адрес, метро под названием
-  LINE_HEIGHT: 1.5,
+  FONT_SIZE_BODY_MIN: 18,    // Минимальный шрифт при авто-сжатии
+  LINE_HEIGHT: 1.3,          // Основной межстрочный интервал (было 1.5)
+  LINE_HEIGHT_COMPACT: 1.2,  // Компактный (для Tier 3 авто-сжатия)
+  PARAGRAPH_MARGIN_MM: 3,    // Отступ между абзацами (было 5mm)
 } as const;
 
 // ─── Text fitting constants ──────────────────────────────────────────────────
 
-// Приблизительная высота строки при font-size 20pt, line-height 1.5
-// 20pt ≈ 7.06mm, × 1.5 = 10.59mm/строка
-export const LINE_HEIGHT_MM = 10.5;
+// Приблизительная высота строки при font-size 20pt, line-height 1.3
+// 20pt ≈ 7.06mm, × 1.3 = 9.18mm/строка
+export const LINE_HEIGHT_MM = 9.2;
 
 // Средняя ширина символа пропорционального Arial 20pt (кириллица)
 // Пропорциональный шрифт: ~0.41 × em, em ≈ 7.06mm → ~2.9mm

@@ -34,9 +34,66 @@ function photoDataUrl(filename: string): string {
   return optimizedPhotos.get(filename) || '';
 }
 
-// ─── Overflow detection ──────────────────────────────────────────────────────
-// Оценивает, влезет ли текст в колонку. Если нет — уменьшаем шрифт на 1pt.
+// ─── Overflow detection & auto-shrink ────────────────────────────────────────
 
+interface TextFitResult {
+  fontSize: number;
+  lineHeight: number;
+  marginBottom: string;
+}
+
+/**
+ * Оценивает высоту текста для заданных параметров шрифта.
+ * charWidthMm корректируется пропорционально размеру шрифта.
+ */
+function estimateTextHeightWithParams(
+  paragraphs: string[],
+  colWidthMm: number,
+  fontSize: number,
+  lineHeight: number,
+  marginMm: number,
+): number {
+  const adjustedCharWidth = CHAR_WIDTH_MM * (fontSize / PDF.FONT_SIZE_BODY);
+  const cpl = Math.floor(colWidthMm / adjustedCharWidth);
+  const lineHeightMm = fontSize * 0.353 * lineHeight;
+  let totalHeight = 0;
+  for (const para of paragraphs) {
+    let paraLines = 0;
+    for (const line of para.split('\n')) {
+      paraLines += Math.max(1, Math.ceil(line.length / cpl));
+    }
+    totalHeight += paraLines * lineHeightMm + marginMm;
+  }
+  return totalHeight;
+}
+
+/**
+ * Многоуровневое сжатие текста: подбирает fontSize + lineHeight,
+ * чтобы текст поместился в 95% высоты контентной области.
+ */
+function fitTextToSlide(
+  paragraphs: string[],
+  colWidthMm: number,
+  contentHeightMm: number = PDF.CONTENT_HEIGHT_MM,
+): TextFitResult {
+  const tiers: TextFitResult[] = [
+    { fontSize: PDF.FONT_SIZE_BODY, lineHeight: PDF.LINE_HEIGHT, marginBottom: `${PDF.PARAGRAPH_MARGIN_MM}mm` },
+    { fontSize: PDF.FONT_SIZE_BODY - 1, lineHeight: PDF.LINE_HEIGHT, marginBottom: `${PDF.PARAGRAPH_MARGIN_MM}mm` },
+    { fontSize: PDF.FONT_SIZE_BODY_MIN, lineHeight: PDF.LINE_HEIGHT_COMPACT, marginBottom: '2mm' },
+  ];
+
+  for (const tier of tiers) {
+    const height = estimateTextHeightWithParams(
+      paragraphs, colWidthMm, tier.fontSize, tier.lineHeight, parseFloat(tier.marginBottom),
+    );
+    if (height <= contentHeightMm * 0.95) {
+      return tier;
+    }
+  }
+  return tiers[tiers.length - 1];
+}
+
+/** Совместимая обёртка для layoutEngine (используется LINE_HEIGHT_MM по умолчанию) */
 function estimateTextHeight(paragraphs: string[], colWidthMm: number): number {
   const cpl = Math.floor(colWidthMm / CHAR_WIDTH_MM);
   let lines = 0;
@@ -44,7 +101,7 @@ function estimateTextHeight(paragraphs: string[], colWidthMm: number): number {
     for (const line of para.split('\n')) {
       lines += Math.max(1, Math.ceil(line.length / cpl));
     }
-    lines += 0.5; // paragraph margin
+    lines += PDF.PARAGRAPH_MARGIN_MM / LINE_HEIGHT_MM;
   }
   return lines * LINE_HEIGHT_MM;
 }
@@ -101,18 +158,29 @@ function renderTitleSlide(property: Property, photos: Photo[]): string {
 // ─── Advantages slide ─────────────────────────────────────────────────────────
 
 function renderAdvantagesSlide(advantages: string[], photos: Photo[]): string {
-  // Проверяем, влезут ли все буллеты; если нет — уменьшаем шрифт
-  const totalLines = advantages.length * 1.8; // ~1.8 строки на буллет (с отступом)
-  const maxLines = PDF.CONTENT_HEIGHT_MM / LINE_HEIGHT_MM * 0.85;
-  const fontOverride = totalLines > maxLines ? PDF.FONT_SIZE_BULLET - 1 : PDF.FONT_SIZE_BULLET;
+  // Многоуровневое сжатие для преимуществ
+  const totalLines = advantages.length * 1.8;
+  const availableHeight = PDF.CONTENT_HEIGHT_MM * 0.85;
+  const lineHeightMm1 = PDF.FONT_SIZE_BULLET * 0.353 * PDF.LINE_HEIGHT;
+  const lineHeightMm2 = (PDF.FONT_SIZE_BULLET - 1) * 0.353 * PDF.LINE_HEIGHT;
+  const lineHeightMm3 = PDF.FONT_SIZE_BODY_MIN * 0.353 * PDF.LINE_HEIGHT_COMPACT;
 
-  // Заголовок внутри текстовой колонки, чтобы фото занимали полную высоту
+  let fontOverride: number = PDF.FONT_SIZE_BULLET;
+  let lhOverride: number = PDF.LINE_HEIGHT;
+  if (totalLines * lineHeightMm1 > availableHeight) {
+    fontOverride = PDF.FONT_SIZE_BULLET - 1;
+    if (totalLines * lineHeightMm2 > availableHeight) {
+      fontOverride = PDF.FONT_SIZE_BODY_MIN;
+      lhOverride = PDF.LINE_HEIGHT_COMPACT;
+    }
+  }
+
   return `
     <div class="slide">
       <div class="slide-body">
         <div class="text-col">
           <div class="slide-heading">ПРЕИМУЩЕСТВА</div>
-          <ul class="adv-list" style="font-size:${fontOverride}pt">
+          <ul class="adv-list" style="font-size:${fontOverride}pt; line-height:${lhOverride}">
             ${advantages.map(a => `<li class="adv-item">${a}</li>`).join('')}
           </ul>
         </div>
@@ -138,16 +206,14 @@ function renderPhotosCol(photos: Photo[]): string {
 // ─── Content slide ────────────────────────────────────────────────────────────
 
 function renderContentSlide(paragraphs: string[], photos: Photo[]): string {
-  // Авто-уменьшение шрифта если текст не влезает
-  const heightEst = estimateTextHeight(paragraphs, PDF.TEXT_COLUMN_WIDTH_MM);
-  const overflow = heightEst > PDF.CONTENT_HEIGHT_MM * 0.95;
-  const fontSize = overflow ? PDF.FONT_SIZE_BODY - 1 : PDF.FONT_SIZE_BODY;
+  // Многоуровневое авто-сжатие шрифта
+  const fit = fitTextToSlide(paragraphs, PDF.TEXT_COLUMN_WIDTH_MM);
 
   return `
     <div class="slide">
       <div class="slide-body">
         <div class="text-col">
-          ${paragraphs.map(p => `<p class="body-p" style="font-size:${fontSize}pt">${p.replace(/\n/g, '<br/>')}</p>`).join('')}
+          ${paragraphs.map(p => `<p class="body-p" style="font-size:${fit.fontSize}pt; line-height:${fit.lineHeight}; margin-bottom:${fit.marginBottom}">${p.replace(/\n/g, '<br/>')}</p>`).join('')}
         </div>
         ${renderPhotosCol(photos)}
       </div>
@@ -163,16 +229,16 @@ function renderFullscreenSlide(photo: Photo): string {
 // ─── Full-text slide (без фото, шрифт чуть крупнее) ──────────────────────────
 
 function renderFullTextSlide(paragraphs: string[]): string {
-  // Авто-уменьшение если переполнение
-  const heightEst = estimateTextHeight(paragraphs, PDF.CONTENT_WIDTH_MM);
-  const overflow = heightEst > PDF.CONTENT_HEIGHT_MM * 0.95;
-  const fontSize = overflow ? PDF.FONT_SIZE_BODY : PDF.FONT_SIZE_BODY_FULL;
+  // Многоуровневое авто-сжатие
+  const fit = fitTextToSlide(paragraphs, PDF.CONTENT_WIDTH_MM);
+  // Если текст влезает без сжатия — используем чуть больший шрифт для full-text
+  const fontSize = (fit.fontSize === PDF.FONT_SIZE_BODY) ? PDF.FONT_SIZE_BODY_FULL : fit.fontSize;
 
   return `
     <div class="slide">
       <div class="slide-body">
         <div class="text-col text-col-full">
-          ${paragraphs.map(p => `<p class="body-p" style="font-size:${fontSize}pt">${p.replace(/\n/g, '<br/>')}</p>`).join('')}
+          ${paragraphs.map(p => `<p class="body-p" style="font-size:${fontSize}pt; line-height:${fit.lineHeight}; margin-bottom:${fit.marginBottom}">${p.replace(/\n/g, '<br/>')}</p>`).join('')}
         </div>
       </div>
     </div>`;
@@ -183,7 +249,28 @@ function renderFullTextSlide(paragraphs: string[]): string {
 function renderPhotoGridSlide(photos: Photo[]): string {
   const cells = photos.slice(0, 4);
 
-  // Если ровно 3 фото: первая строка — 2 фото, вторая — 1 по центру (span 2 cols)
+  // 0 фото → пустой слайд
+  if (cells.length === 0) {
+    return `<div class="slide photo-grid-slide"><div class="photo-grid"></div></div>`;
+  }
+
+  // 1 фото → fullscreen
+  if (cells.length === 1) {
+    return `<div class="slide fullscreen-slide"><img src="${photoDataUrl(cells[0].filename)}" class="fullscreen-img" /></div>`;
+  }
+
+  // 2 фото → один ряд на всю высоту
+  if (cells.length === 2) {
+    return `
+      <div class="slide photo-grid-slide">
+        <div class="photo-grid" style="grid-template-rows: 1fr;">
+          <div class="grid-cell"><img src="${photoDataUrl(cells[0].filename)}" class="photo-img"/></div>
+          <div class="grid-cell"><img src="${photoDataUrl(cells[1].filename)}" class="photo-img"/></div>
+        </div>
+      </div>`;
+  }
+
+  // 3 фото → 2 сверху + 1 по центру снизу
   if (cells.length === 3) {
     return `
       <div class="slide photo-grid-slide">
@@ -195,12 +282,11 @@ function renderPhotoGridSlide(photos: Photo[]): string {
       </div>`;
   }
 
-  const empty = Math.max(0, 4 - cells.length);
+  // 4 фото → стандартная 2×2
   return `
     <div class="slide photo-grid-slide">
       <div class="photo-grid">
         ${cells.map(p => `<div class="grid-cell"><img src="${photoDataUrl(p.filename)}" class="photo-img"/></div>`).join('')}
-        ${Array.from({length: empty}).map(() => '<div class="grid-cell" style="background:#f0f0f0"></div>').join('')}
       </div>
     </div>`;
 }
@@ -256,7 +342,7 @@ const CSS = `
   .text-col { width: ${PDF.TEXT_COLUMN_WIDTH_MM}mm; overflow: hidden; flex-shrink: 0; }
   .text-col-full { width: ${PDF.CONTENT_WIDTH_MM}mm !important; }
   .body-p {
-    margin-bottom: 5mm; line-height: ${PDF.LINE_HEIGHT};
+    margin-bottom: ${PDF.PARAGRAPH_MARGIN_MM}mm; line-height: ${PDF.LINE_HEIGHT};
     font-size: ${PDF.FONT_SIZE_BODY}pt; text-align: left;
   }
   .body-p:last-child { margin-bottom: 0; }

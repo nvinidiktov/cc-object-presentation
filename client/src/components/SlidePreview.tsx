@@ -7,18 +7,42 @@ const SCALE = PREVIEW_WIDTH / PDF.PAGE_WIDTH_MM;
 function px(mm: number) { return Math.round(mm * SCALE); }
 function pt(points: number) { return px(points * 0.353); }
 
-// ─── Overflow detection (same logic as server) ───────────────────────────────
+// ─── Overflow detection & auto-shrink (same logic as server) ─────────────────
 
-function estimateTextHeight(paragraphs: string[], colWidthMm: number): number {
-  const cpl = Math.floor(colWidthMm / CHAR_WIDTH_MM);
-  let lines = 0;
-  for (const para of paragraphs) {
-    for (const line of para.split('\n')) {
-      lines += Math.max(1, Math.ceil(line.length / cpl));
+interface TextFitResult {
+  fontSize: number;
+  lineHeight: number;
+  marginBottom: number; // mm
+}
+
+function fitTextToSlide(
+  paragraphs: string[],
+  colWidthMm: number,
+  contentHeightMm: number = PDF.CONTENT_HEIGHT_MM,
+): TextFitResult {
+  const tiers: TextFitResult[] = [
+    { fontSize: PDF.FONT_SIZE_BODY, lineHeight: PDF.LINE_HEIGHT, marginBottom: PDF.PARAGRAPH_MARGIN_MM },
+    { fontSize: PDF.FONT_SIZE_BODY - 1, lineHeight: PDF.LINE_HEIGHT, marginBottom: PDF.PARAGRAPH_MARGIN_MM },
+    { fontSize: PDF.FONT_SIZE_BODY_MIN, lineHeight: PDF.LINE_HEIGHT_COMPACT, marginBottom: 2 },
+  ];
+
+  for (const tier of tiers) {
+    const adjustedCharWidth = CHAR_WIDTH_MM * (tier.fontSize / PDF.FONT_SIZE_BODY);
+    const cpl = Math.floor(colWidthMm / adjustedCharWidth);
+    const lineHeightMm = tier.fontSize * 0.353 * tier.lineHeight;
+    let totalHeight = 0;
+    for (const para of paragraphs) {
+      let paraLines = 0;
+      for (const line of para.split('\n')) {
+        paraLines += Math.max(1, Math.ceil(line.length / cpl));
+      }
+      totalHeight += paraLines * lineHeightMm + tier.marginBottom;
     }
-    lines += 0.5;
+    if (totalHeight <= contentHeightMm * 0.95) {
+      return tier;
+    }
   }
-  return lines * LINE_HEIGHT_MM;
+  return tiers[tiers.length - 1];
 }
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
@@ -140,10 +164,21 @@ function TitleSlide({ property, photos }: { property: Property; photos: Photo[] 
 
 function AdvantagesSlide({ advantages, photos }: { advantages: string[]; photos: Photo[] }) {
   const totalLines = advantages.length * 1.8;
-  const maxLines = PDF.CONTENT_HEIGHT_MM / LINE_HEIGHT_MM * 0.85;
-  const fontSize = totalLines > maxLines ? PDF.FONT_SIZE_BULLET - 1 : PDF.FONT_SIZE_BULLET;
+  const availableHeight = PDF.CONTENT_HEIGHT_MM * 0.85;
+  const lhMm1 = PDF.FONT_SIZE_BULLET * 0.353 * PDF.LINE_HEIGHT;
+  const lhMm2 = (PDF.FONT_SIZE_BULLET - 1) * 0.353 * PDF.LINE_HEIGHT;
+  const lhMm3 = PDF.FONT_SIZE_BODY_MIN * 0.353 * PDF.LINE_HEIGHT_COMPACT;
 
-  // Заголовок внутри текстовой колонки, чтобы фото занимали полную высоту
+  let fontSize: number = PDF.FONT_SIZE_BULLET;
+  let lh: number = PDF.LINE_HEIGHT;
+  if (totalLines * lhMm1 > availableHeight) {
+    fontSize = PDF.FONT_SIZE_BULLET - 1;
+    if (totalLines * lhMm2 > availableHeight) {
+      fontSize = PDF.FONT_SIZE_BODY_MIN;
+      lh = PDF.LINE_HEIGHT_COMPACT;
+    }
+  }
+
   return (
     <div style={S.slide}>
       <div style={S.body}>
@@ -151,7 +186,7 @@ function AdvantagesSlide({ advantages, photos }: { advantages: string[]; photos:
           <div style={{ fontWeight: 'bold', fontSize: pt(PDF.FONT_SIZE_HEADING), color: PDF.COLOR_TEXT, marginBottom: px(4), letterSpacing: '0.3px' }}>
             ПРЕИМУЩЕСТВА
           </div>
-          <ul style={{ listStyle: 'disc', paddingLeft: px(5), fontSize: pt(fontSize), lineHeight: PDF.LINE_HEIGHT }}>
+          <ul style={{ listStyle: 'disc', paddingLeft: px(5), fontSize: pt(fontSize), lineHeight: lh }}>
             {advantages.map((a, i) => (
               <li key={i} style={{ marginBottom: px(2.5) }}>{a}</li>
             ))}
@@ -166,16 +201,14 @@ function AdvantagesSlide({ advantages, photos }: { advantages: string[]; photos:
 // ─── Content slide ────────────────────────────────────────────────────────────
 
 function ContentSlide({ paragraphs, photos }: { paragraphs: string[]; photos: Photo[] }) {
-  const heightEst = estimateTextHeight(paragraphs, PDF.TEXT_COLUMN_WIDTH_MM);
-  const overflow = heightEst > PDF.CONTENT_HEIGHT_MM * 0.95;
-  const fontSize = overflow ? PDF.FONT_SIZE_BODY - 1 : PDF.FONT_SIZE_BODY;
+  const fit = fitTextToSlide(paragraphs, PDF.TEXT_COLUMN_WIDTH_MM);
 
   return (
     <div style={S.slide}>
       <div style={S.body}>
         <div style={S.textCol}>
           {paragraphs.map((p, i) => (
-            <p key={i} style={{ fontSize: pt(fontSize), marginBottom: px(5), lineHeight: PDF.LINE_HEIGHT, textAlign: 'left', whiteSpace: 'pre-wrap' }}>{p}</p>
+            <p key={i} style={{ fontSize: pt(fit.fontSize), marginBottom: px(fit.marginBottom), lineHeight: fit.lineHeight, textAlign: 'left', whiteSpace: 'pre-wrap' }}>{p}</p>
           ))}
         </div>
         <PhotosColumn photos={photos} />
@@ -198,15 +231,14 @@ function FullscreenSlide({ photo }: { photo?: Photo }) {
 // ─── Full-text slide (font чуть крупнее) ─────────────────────────────────────
 
 function FullTextSlide({ paragraphs }: { paragraphs: string[] }) {
-  const heightEst = estimateTextHeight(paragraphs, PDF.CONTENT_WIDTH_MM);
-  const overflow = heightEst > PDF.CONTENT_HEIGHT_MM * 0.95;
-  const fontSize = overflow ? PDF.FONT_SIZE_BODY : PDF.FONT_SIZE_BODY_FULL;
+  const fit = fitTextToSlide(paragraphs, PDF.CONTENT_WIDTH_MM);
+  const fontSize = (fit.fontSize === PDF.FONT_SIZE_BODY) ? PDF.FONT_SIZE_BODY_FULL : fit.fontSize;
 
   return (
     <div style={S.slide}>
       <div style={S.textColFull}>
         {paragraphs.map((p, i) => (
-          <p key={i} style={{ fontSize: pt(fontSize), marginBottom: px(5), lineHeight: PDF.LINE_HEIGHT, textAlign: 'left', whiteSpace: 'pre-wrap' }}>{p}</p>
+          <p key={i} style={{ fontSize: pt(fontSize), marginBottom: px(fit.marginBottom), lineHeight: fit.lineHeight, textAlign: 'left', whiteSpace: 'pre-wrap' }}>{p}</p>
         ))}
       </div>
     </div>
@@ -216,7 +248,33 @@ function FullTextSlide({ paragraphs }: { paragraphs: string[] }) {
 // ─── Photo grid 2×2 ──────────────────────────────────────────────────────────
 
 function PhotoGridSlide({ photos }: { photos: Photo[] }) {
-  // 3 фото: третье по центру (span 2 cols, max-width 50%)
+  // 1 фото → fullscreen
+  if (photos.length === 1 && photos[0]) {
+    const pad = px(PDF.FULLSCREEN_PADDING_MM);
+    return (
+      <div style={{ ...S.slide, padding: pad }}>
+        <img src={photoUrl(photos[0].filename)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+      </div>
+    );
+  }
+
+  // 2 фото → один ряд на всю высоту
+  if (photos.length === 2) {
+    return (
+      <div style={S.slide}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gridTemplateRows: '1fr', gap: px(PDF.GRID_GAP_MM), width: '100%', flex: 1 }}>
+          <div style={{ overflow: 'hidden' }}>
+            <img src={photoUrl(photos[0].filename)} alt="" style={S.img} />
+          </div>
+          <div style={{ overflow: 'hidden' }}>
+            <img src={photoUrl(photos[1].filename)} alt="" style={S.img} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 3 фото → 2 сверху + 1 по центру снизу
   if (photos.length === 3) {
     return (
       <div style={S.slide}>
@@ -235,12 +293,13 @@ function PhotoGridSlide({ photos }: { photos: Photo[] }) {
     );
   }
 
+  // 4 фото → стандартная 2×2
   return (
     <div style={S.slide}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gridTemplateRows: '1fr 1fr', gap: px(PDF.GRID_GAP_MM), width: '100%', flex: 1 }}>
-        {[0, 1, 2, 3].map(i => (
+        {photos.slice(0, 4).map((p, i) => (
           <div key={i} style={{ overflow: 'hidden' }}>
-            {photos[i] ? <img src={photoUrl(photos[i].filename)} alt="" style={S.img} /> : <div style={{ width: '100%', height: '100%', background: '#f0f0f0' }} />}
+            <img src={photoUrl(p.filename)} alt="" style={S.img} />
           </div>
         ))}
       </div>
