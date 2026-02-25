@@ -121,6 +121,7 @@ export default function PropertyForm({
         : [
             { label: 'Высота потолков', value: '' },
             { label: 'Паркинг', value: '' },
+            { label: 'Дополнительно', value: '' },
           ],
       advantagesText: advantagesToText(defaultValues?.advantages ?? []),
       description: defaultValues?.description ?? '',
@@ -266,12 +267,12 @@ export default function PropertyForm({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="label">Адрес <span className="text-red-500">*</span></label>
-            <input {...register('address')} className="input" placeholder="г. Москва, ул. Саульская, д. 1" />
+            <input {...register('address')} className="input" placeholder="г. Москва, ЦАО, ул. Саульская, д. 1" />
             {errors.address && <p className="field-error">{errors.address.message}</p>}
           </div>
           <div>
             <label className="label">Метро</label>
-            <input {...register('metro')} className="input" placeholder="м. Арбатская (5 мин. пешком), м. Тверская (5 мин. пешком)" />
+            <input {...register('metro')} className="input" placeholder="м. Арбатская (5 м.п.), м. Тверская (5 м.п.), м. Таганская (3 м.п.)" />
           </div>
         </div>
 

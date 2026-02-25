@@ -216,11 +216,12 @@ const SlideEditorCard = React.memo(function SlideEditorCard({
         );
 
       case 'photo-grid': {
-        // Адаптивная сетка: 1=fullscreen, 2=ряд, 3-4=grid 2×2
-        const gridCols = photos.length <= 1 ? 'grid-cols-1' : 'grid-cols-2';
+        // Адаптивная сетка: показываем столько слотов, сколько реально фото (мин 1)
+        const actualSlots = Math.max(1, photos.length);
+        const gridCols = actualSlots <= 1 ? 'grid-cols-1' : 'grid-cols-2';
         return (
           <div className={`grid ${gridCols} gap-2`}>
-            {Array.from({ length: slots }).map((_, i) => (
+            {Array.from({ length: actualSlots }).map((_, i) => (
               <PhotoDropSlot
                 key={i}
                 slideId={slide.id}

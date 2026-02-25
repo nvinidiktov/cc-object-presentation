@@ -6,10 +6,10 @@ import Jimp from 'jimp';
 import fs from 'fs';
 import path from 'path';
 
-// Max image dimensions for PDF (optimized for ~10MB file size)
-const PDF_IMG_MAX_W = 700;
-const PDF_IMG_MAX_H = 500;
-const PDF_IMG_QUALITY = 55;
+// Max image dimensions for PDF (optimized for ~8-10MB file size)
+const PDF_IMG_MAX_W = 600;
+const PDF_IMG_MAX_H = 420;
+const PDF_IMG_QUALITY = 42;
 
 // Cache of optimized data URLs, populated before HTML generation
 let optimizedPhotos: Map<string, string> = new Map();
@@ -77,17 +77,18 @@ function fitTextToSlide(
   contentHeightMm: number = PDF.CONTENT_HEIGHT_MM,
 ): TextFitResult {
   const tiers: TextFitResult[] = [
-    { fontSize: 20, lineHeight: 1.5, marginBottom: '5mm' },   // Tier 1: стандарт
-    { fontSize: 19, lineHeight: 1.4, marginBottom: '4mm' },   // Tier 2: чуть меньше
-    { fontSize: 18, lineHeight: 1.3, marginBottom: '3mm' },   // Tier 3: компактнее
-    { fontSize: 17, lineHeight: 1.2, marginBottom: '2mm' },   // Tier 4: крайний случай
+    { fontSize: 20, lineHeight: 1.2,  marginBottom: '3mm' },    // Tier 1: стандарт
+    { fontSize: 19, lineHeight: 1.15, marginBottom: '2.5mm' },  // Tier 2: чуть меньше
+    { fontSize: 18, lineHeight: 1.1,  marginBottom: '2mm' },    // Tier 3: компактнее
+    { fontSize: 17, lineHeight: 1.05, marginBottom: '1.5mm' },  // Tier 4: ещё компактнее
+    { fontSize: 16, lineHeight: 1.0,  marginBottom: '1mm' },    // Tier 5: крайний случай
   ];
 
   for (const tier of tiers) {
     const height = estimateTextHeightWithParams(
       paragraphs, colWidthMm, tier.fontSize, tier.lineHeight, parseFloat(tier.marginBottom),
     );
-    if (height <= contentHeightMm * 0.95) {
+    if (height <= contentHeightMm * 0.92) {
       return tier;
     }
   }

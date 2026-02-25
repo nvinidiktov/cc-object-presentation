@@ -21,10 +21,11 @@ function fitTextToSlide(
   contentHeightMm: number = PDF.CONTENT_HEIGHT_MM,
 ): TextFitResult {
   const tiers: TextFitResult[] = [
-    { fontSize: 20, lineHeight: 1.5, marginBottom: 5 },   // Tier 1: стандарт
-    { fontSize: 19, lineHeight: 1.4, marginBottom: 4 },   // Tier 2: чуть меньше
-    { fontSize: 18, lineHeight: 1.3, marginBottom: 3 },   // Tier 3: компактнее
-    { fontSize: 17, lineHeight: 1.2, marginBottom: 2 },   // Tier 4: крайний случай
+    { fontSize: 20, lineHeight: 1.2,  marginBottom: 3 },      // Tier 1: стандарт
+    { fontSize: 19, lineHeight: 1.15, marginBottom: 2.5 },    // Tier 2: чуть меньше
+    { fontSize: 18, lineHeight: 1.1,  marginBottom: 2 },      // Tier 3: компактнее
+    { fontSize: 17, lineHeight: 1.05, marginBottom: 1.5 },    // Tier 4: ещё компактнее
+    { fontSize: 16, lineHeight: 1.0,  marginBottom: 1 },      // Tier 5: крайний случай
   ];
 
   for (const tier of tiers) {
@@ -39,7 +40,7 @@ function fitTextToSlide(
       }
       totalHeight += paraLines * lineHeightMm + tier.marginBottom;
     }
-    if (totalHeight <= contentHeightMm * 0.95) {
+    if (totalHeight <= contentHeightMm * 0.92) {
       return tier;
     }
   }

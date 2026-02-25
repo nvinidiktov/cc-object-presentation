@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useMemo } from 'react';
 import {
   DndContext,
   closestCenter,
@@ -16,21 +16,58 @@ import {
   rectSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Photo, PhotoType } from 'shared';
+import { Photo, PhotoType, Property } from 'shared';
 import { photosApi, photoUrl } from '../lib/api';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Trash2, Upload, GripVertical, ImageIcon, LayoutGrid, Maximize } from 'lucide-react';
 
-// ─── Sortable photo card (simplified) ────────────────────────────────────────
+// ─── Compute slide assignment for regular photos ─────────────────────────────
+
+function computePhotoSlideMap(
+  regularPhotos: Photo[],
+  hasAdvantages: boolean,
+): Map<string, number> {
+  const map = new Map<string, number>();
+  let photoIdx = 0;
+  let slideNum = 1;
+
+  // Титульный: 2 фото → С1
+  for (let i = 0; i < 2 && photoIdx < regularPhotos.length; i++, photoIdx++) {
+    map.set(regularPhotos[photoIdx].id, slideNum);
+  }
+  slideNum++;
+
+  // Преимущества: 2 фото → С2
+  if (hasAdvantages) {
+    for (let i = 0; i < 2 && photoIdx < regularPhotos.length; i++, photoIdx++) {
+      map.set(regularPhotos[photoIdx].id, slideNum);
+    }
+    slideNum++;
+  }
+
+  // Контентные/фото-сетки: по 2 фото
+  while (photoIdx < regularPhotos.length) {
+    for (let i = 0; i < 2 && photoIdx < regularPhotos.length; i++, photoIdx++) {
+      map.set(regularPhotos[photoIdx].id, slideNum);
+    }
+    slideNum++;
+  }
+
+  return map;
+}
+
+// ─── Sortable photo card ─────────────────────────────────────────────────────
 
 function SortablePhoto({
   photo,
   index,
   onDelete,
+  slideNum,
 }: {
   photo: Photo;
   index: number;
   onDelete: (id: string) => void;
+  slideNum?: number;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: photo.id });
@@ -73,6 +110,12 @@ function SortablePhoto({
       <div className="absolute bottom-1 left-1 bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded font-mono">
         #{index + 1}
       </div>
+      {/* Slide badge */}
+      {slideNum != null && (
+        <div className="absolute bottom-1 right-1 bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded font-mono">
+          С{slideNum}
+        </div>
+      )}
     </div>
   );
 }
@@ -143,10 +186,10 @@ interface UploadingFile {
 interface Props {
   propertyId: string;
   photos: Photo[];
-  property?: unknown;
+  property?: Property;
 }
 
-export default function PhotoLibrary({ propertyId, photos }: Props) {
+export default function PhotoLibrary({ propertyId, photos, property }: Props) {
   const qc = useQueryClient();
   const [uploading, setUploading] = useState<UploadingFile[]>([]);
 
@@ -159,6 +202,12 @@ export default function PhotoLibrary({ propertyId, photos }: Props) {
   const regularPhotos = photos.filter(p => p.type === 'regular').sort((a, b) => a.orderIndex - b.orderIndex);
   const fullscreenPhotos = photos.filter(p => p.type === 'fullscreen').sort((a, b) => a.orderIndex - b.orderIndex);
   const floorplanPhotos = photos.filter(p => p.type === 'floorplan').sort((a, b) => a.orderIndex - b.orderIndex);
+
+  // Compute slide assignment for regular photos
+  const photoSlideMap = useMemo(() => {
+    const hasAdvantages = (property?.advantages?.length ?? 0) > 0;
+    return computePhotoSlideMap(regularPhotos, hasAdvantages);
+  }, [regularPhotos, property]);
 
   // ─── Upload mutation ────────────────────────────────────────────────────────
 
@@ -203,7 +252,58 @@ export default function PhotoLibrary({ propertyId, photos }: Props) {
     qc.invalidateQueries({ queryKey: ['photos', propertyId] });
   };
 
-  // ─── Render photo section (shared for all types) ────────────────────────────
+  // ─── Render: Regular photos with slide badges ──────────────────────────────
+
+  const renderRegularSection = () => (
+    <section className="space-y-3">
+      <div className="flex items-center gap-2">
+        <ImageIcon className="w-4 h-4 text-gray-500" />
+        <h3 className="font-medium text-gray-800 text-sm">Основные фото</h3>
+        <span className="text-xs text-gray-400">(появятся на слайдах с текстом и в сетке)</span>
+      </div>
+
+      <UploadZone
+        label="Перетащите фотографии или нажмите для выбора"
+        hint="JPG, PNG, WebP — до 20 МБ"
+        onFiles={files => uploadFiles(files, 'regular')}
+      />
+
+      {/* Uploading progress */}
+      {uploading.map(u => (
+        <div key={u.name} className="text-xs text-gray-500 flex items-center gap-2">
+          <div className="flex-1 bg-gray-200 rounded h-1">
+            <div className="bg-gray-900 h-1 rounded transition-all" style={{ width: `${u.progress}%` }} />
+          </div>
+          <span className="truncate max-w-[200px]">{u.name}</span>
+        </div>
+      ))}
+
+      {/* Simple flat grid with slide badges */}
+      {regularPhotos.length > 0 && (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={e => handleDragEnd(e, 'regular', regularPhotos)}
+        >
+          <SortableContext items={regularPhotos.map(p => p.id)} strategy={rectSortingStrategy}>
+            <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+              {regularPhotos.map((photo, i) => (
+                <SortablePhoto
+                  key={photo.id}
+                  photo={photo}
+                  index={i}
+                  onDelete={id => deleteMutation.mutate(id)}
+                  slideNum={photoSlideMap.get(photo.id)}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
+      )}
+    </section>
+  );
+
+  // ─── Render: Fullscreen & Floorplan (no slide badges) ──────────────────────
 
   const renderPhotoSection = (
     title: string,
@@ -228,17 +328,6 @@ export default function PhotoLibrary({ propertyId, photos }: Props) {
         multiple={multiple}
       />
 
-      {/* Uploading progress */}
-      {type === 'regular' && uploading.map(u => (
-        <div key={u.name} className="text-xs text-gray-500 flex items-center gap-2">
-          <div className="flex-1 bg-gray-200 rounded h-1">
-            <div className="bg-gray-900 h-1 rounded transition-all" style={{ width: `${u.progress}%` }} />
-          </div>
-          <span className="truncate max-w-[200px]">{u.name}</span>
-        </div>
-      ))}
-
-      {/* Simple flat grid */}
       {list.length > 0 && (
         <DndContext
           sensors={sensors}
@@ -264,15 +353,7 @@ export default function PhotoLibrary({ propertyId, photos }: Props) {
 
   return (
     <div className="space-y-8">
-      {renderPhotoSection(
-        'Основные фото',
-        '(появятся на слайдах с текстом и в сетке)',
-        'Перетащите фотографии или нажмите для выбора',
-        'regular',
-        regularPhotos,
-        ImageIcon,
-        true
-      )}
+      {renderRegularSection()}
 
       {renderPhotoSection(
         'Полноэкранные фото',
