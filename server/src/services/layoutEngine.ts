@@ -83,7 +83,7 @@ export function buildLayout(
   }
 
   // ─── Слайды с контентом: жадный алгоритм ─────────────────────────────────
-  const contentTextHeightMm = PDF.CONTENT_HEIGHT_MM * 0.90;
+  const contentTextHeightMm = PDF.CONTENT_HEIGHT_MM * 0.82;
   let paraIndex = 0;
 
   while (paraIndex < allParagraphs.length || regularPhotoIndex < regularPhotos.length) {

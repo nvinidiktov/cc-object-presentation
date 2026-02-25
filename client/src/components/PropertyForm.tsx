@@ -4,7 +4,6 @@ import { z } from 'zod';
 import { PropertyCreate } from 'shared';
 import { Plus, X, Check, Loader2 } from 'lucide-react';
 import React, { useEffect, useRef, useCallback, useState } from 'react';
-import DescriptionEditor from './DescriptionEditor';
 
 // ─── Validation schema ────────────────────────────────────────────────────────
 
@@ -374,16 +373,18 @@ export default function PropertyForm({
           </span>
         </h2>
 
-        <DescriptionEditor
-          value={watch('description') || ''}
-          onChange={v => setValue('description', v, { shouldDirty: true })}
-          onPaste={e => handlePaste(e, 'description')}
-          startSlideNum={watch('advantagesText')?.trim() ? 3 : 2}
-        />
-        <p className="text-xs text-gray-400">
-          Разделяйте абзацы пустой строкой. Пунктирные линии показывают границы слайдов.
+        <p className="text-xs text-gray-400 mb-2">
+          Разделяйте абзацы пустой строкой.
           Вставка из Google Docs / Word — форматирование сохранится.
+          Разбивку по слайдам увидите во вкладке «Редактор слайдов».
         </p>
+        <textarea
+          {...register('description')}
+          className="input resize-none font-mono text-sm"
+          rows={12}
+          placeholder="Опишите объект. Каждый абзац, разделённый пустой строкой, будет распределён по слайдам."
+          onPaste={e => handlePaste(e, 'description')}
+        />
       </section>
 
       {/* ─── Кнопка сабмит (только в режиме создания) ─────────────────────── */}

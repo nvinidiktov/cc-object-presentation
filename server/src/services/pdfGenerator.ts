@@ -2,14 +2,36 @@ import puppeteer from 'puppeteer';
 import { Property, Photo, Slide } from 'shared';
 import { PDF, LINE_HEIGHT_MM, CHAR_WIDTH_MM, formatPrice } from 'shared';
 import { getImagePath } from './imageProcessor';
+import Jimp from 'jimp';
 import fs from 'fs';
 import path from 'path';
 
-function photoDataUrl(filename: string): string {
+// Max image dimensions for PDF (139mm at 150dpi ≈ 821px)
+const PDF_IMG_MAX_W = 900;
+const PDF_IMG_MAX_H = 700;
+const PDF_IMG_QUALITY = 72;
+
+// Cache of optimized data URLs, populated before HTML generation
+let optimizedPhotos: Map<string, string> = new Map();
+
+async function optimizePhotoForPdf(filename: string): Promise<string> {
   const filePath = getImagePath(filename);
   if (!fs.existsSync(filePath)) return '';
-  const data = fs.readFileSync(filePath);
-  return `data:image/jpeg;base64,${data.toString('base64')}`;
+  try {
+    const image = await Jimp.read(filePath);
+    if (image.getWidth() > PDF_IMG_MAX_W || image.getHeight() > PDF_IMG_MAX_H) {
+      image.scaleToFit(PDF_IMG_MAX_W, PDF_IMG_MAX_H);
+    }
+    const buffer = await image.quality(PDF_IMG_QUALITY).getBufferAsync(Jimp.MIME_JPEG);
+    return `data:image/jpeg;base64,${buffer.toString('base64')}`;
+  } catch {
+    const data = fs.readFileSync(filePath);
+    return `data:image/jpeg;base64,${data.toString('base64')}`;
+  }
+}
+
+function photoDataUrl(filename: string): string {
+  return optimizedPhotos.get(filename) || '';
 }
 
 // ─── Overflow detection ──────────────────────────────────────────────────────
@@ -291,6 +313,18 @@ const PDF_OUT_DIR = path.join(__dirname, '..', '..', 'data', 'pdfs');
 if (!fs.existsSync(PDF_OUT_DIR)) fs.mkdirSync(PDF_OUT_DIR, { recursive: true });
 
 export async function generatePdf(property: Property, photos: Photo[], slides: Slide[]): Promise<string> {
+  // Pre-optimize all photos for PDF embedding (resize + compress)
+  const allFilenames = new Set<string>();
+  for (const photo of photos) {
+    if (photo.filename) allFilenames.add(photo.filename);
+  }
+  optimizedPhotos = new Map();
+  await Promise.all(
+    Array.from(allFilenames).map(async (fn) => {
+      optimizedPhotos.set(fn, await optimizePhotoForPdf(fn));
+    })
+  );
+
   const html = buildHtml(property, photos, slides);
   const outPath = path.join(PDF_OUT_DIR, `${property.id}_${Date.now()}.pdf`);
 

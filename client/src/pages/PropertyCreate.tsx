@@ -38,7 +38,7 @@ export default function PropertyCreate() {
       )}
 
       <PropertyForm
-        onSubmit={values => mutation.mutateAsync(values as PC)}
+        onSubmit={async values => { await mutation.mutateAsync(values as PC); }}
         isLoading={mutation.isPending}
         submitLabel="Создать объект →"
       />

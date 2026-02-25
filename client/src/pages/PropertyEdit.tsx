@@ -3,93 +3,28 @@ import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { propertiesApi, photosApi, pdfApi } from '../lib/api';
 import { downloadBlob } from '../lib/utils';
-import PropertyForm from '../components/PropertyForm';
-import PhotoLibrary from '../components/PhotoLibrary';
-import SlidePreview from '../components/SlidePreview';
+import DataTab from '../components/DataTab';
+import SlideEditor from '../components/SlideEditor';
 import { PropertyCreate, Photo, Slide } from 'shared';
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragEndEvent,
-} from '@dnd-kit/core';
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  arrayMove,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 import {
   ChevronLeft,
   FileDown,
   Layers,
-  ImageIcon,
   PencilLine,
   RefreshCw,
   AlertTriangle,
-  GripVertical,
 } from 'lucide-react';
 
-type Tab = 'details' | 'photos' | 'preview';
-
-// ─── Sortable slide wrapper ──────────────────────────────────────────────────
-
-function SortableSlide({
-  slide,
-  property,
-  photoMap,
-  index,
-}: {
-  slide: Slide;
-  property: any;
-  photoMap: Map<string, Photo>;
-  index: number;
-}) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: slide.id });
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-  };
-
-  return (
-    <div ref={setNodeRef} style={style} className="flex items-start gap-2 group">
-      <div
-        {...attributes}
-        {...listeners}
-        className="flex-shrink-0 mt-6 p-1.5 rounded cursor-grab text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-        title="Перетащите для изменения порядка"
-      >
-        <GripVertical className="w-4 h-4" />
-      </div>
-      <div className="flex-1">
-        <SlidePreview
-          slide={slide}
-          property={property}
-          photoMap={photoMap}
-          index={index}
-        />
-      </div>
-    </div>
-  );
-}
-
-// ─── Main component ──────────────────────────────────────────────────────────
+type Tab = 'data' | 'editor';
 
 export default function PropertyEdit() {
   const { id } = useParams<{ id: string }>();
   const qc = useQueryClient();
-  const [activeTab, setActiveTab] = useState<Tab>('details');
+  const [activeTab, setActiveTab] = useState<Tab>('data');
   const [pdfLoading, setPdfLoading] = useState(false);
   const [layoutLoading, setLayoutLoading] = useState(false);
   const [slides, setSlides] = useState<Slide[] | null>(null);
+  const [slidesEdited, setSlidesEdited] = useState(false);
   const [layoutWarnings, setLayoutWarnings] = useState<string[]>([]);
 
   // ─── Queries ────────────────────────────────────────────────────────────────
@@ -113,26 +48,27 @@ export default function PropertyEdit() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['property', id] });
       qc.invalidateQueries({ queryKey: ['properties'] });
-      setSlides(null);
+      // НЕ сбрасываем slides — пусть пользователь решает когда пересоздать
     },
   });
 
   // ─── Generate layout ───────────────────────────────────────────────────────
-  const generateLayout = async () => {
+  const generateLayout = useCallback(async () => {
     setLayoutLoading(true);
     try {
       const result = await pdfApi.getLayout(id!);
       setSlides(result.slides);
       setLayoutWarnings(result.warnings);
-      setActiveTab('preview');
+      setSlidesEdited(false);
+      setActiveTab('editor');
     } catch (err: any) {
       alert('Ошибка: ' + err.message);
     } finally {
       setLayoutLoading(false);
     }
-  };
+  }, [id]);
 
-  // ─── Generate PDF ──────────────────────────────────────────────────────────
+  // ─── Generate PDF ─────────────────────────────────────────────────────────
   const handleExportPdf = async () => {
     setPdfLoading(true);
     try {
@@ -146,25 +82,46 @@ export default function PropertyEdit() {
     }
   };
 
-  // ─── Slide reordering ──────────────────────────────────────────────────────
-  const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
-  );
+  // ─── Slide editing callbacks ───────────────────────────────────────────────
+  const handleSlidesChange = useCallback((newSlides: Slide[]) => {
+    setSlides(newSlides);
+    setSlidesEdited(true);
+  }, []);
 
-  const handleSlideDragEnd = useCallback((event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id || !slides) return;
+  const handleTextChange = useCallback((slideId: string, paragraphs: string[]) => {
+    setSlides(prev => {
+      if (!prev) return prev;
+      return prev.map(s =>
+        s.id === slideId ? { ...s, paragraphs } : s
+      );
+    });
+    setSlidesEdited(true);
+  }, []);
 
-    const oldIndex = slides.findIndex(s => s.id === active.id);
-    const newIndex = slides.findIndex(s => s.id === over.id);
-    if (oldIndex === -1 || newIndex === -1) return;
+  // ─── Tab switch logic ─────────────────────────────────────────────────────
+  const handleTabSwitch = useCallback((newTab: Tab) => {
+    if (newTab === 'editor' && !slides) {
+      // Первый вход в редактор — автогенерация
+      generateLayout();
+      return;
+    }
+    if (newTab === 'data' && slides && slidesEdited) {
+      // Синхронизируем текст обратно в property description
+      const reconstructed = slides
+        .filter(s => s.type === 'content' || s.type === 'full-text')
+        .flatMap(s => s.paragraphs ?? [])
+        .join('\n\n');
+      if (reconstructed && property) {
+        updateMutation.mutate({
+          ...property,
+          description: reconstructed,
+        } as PropertyCreate);
+      }
+    }
+    setActiveTab(newTab);
+  }, [slides, slidesEdited, generateLayout, property, updateMutation]);
 
-    const reordered = arrayMove(slides, oldIndex, newIndex);
-    reordered.forEach((s, i) => { s.orderIndex = i; });
-    setSlides([...reordered]);
-  }, [slides]);
-
+  // ─── Loading / not found ──────────────────────────────────────────────────
   if (propLoading) {
     return (
       <div className="flex items-center justify-center h-64 text-gray-400">
@@ -181,12 +138,10 @@ export default function PropertyEdit() {
     );
   }
 
-  // ─── Tab content ───────────────────────────────────────────────────────────
-
+  // ─── Tabs config ──────────────────────────────────────────────────────────
   const tabs: { id: Tab; label: string; icon: React.ElementType; badge?: number }[] = [
-    { id: 'details', label: 'Данные', icon: PencilLine },
-    { id: 'photos', label: 'Фото', icon: ImageIcon, badge: photos.length },
-    { id: 'preview', label: 'Слайды', icon: Layers, badge: slides?.length },
+    { id: 'data', label: 'Данные', icon: PencilLine, badge: photos.length > 0 ? photos.length : undefined },
+    { id: 'editor', label: 'Редактор слайдов', icon: Layers, badge: slides?.length },
   ];
 
   return (
@@ -239,7 +194,7 @@ export default function PropertyEdit() {
         {tabs.map(tab => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => handleTabSwitch(tab.id)}
             className={`
               flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors
               ${activeTab === tab.id
@@ -260,68 +215,28 @@ export default function PropertyEdit() {
       </div>
 
       {/* Tab Content */}
-      {activeTab === 'details' && (
-        <PropertyForm
-          defaultValues={property}
-          onSubmit={values => updateMutation.mutateAsync(values as PropertyCreate)}
+      {activeTab === 'data' && (
+        <DataTab
+          property={property}
+          propertyId={id!}
+          photos={photos}
+          photosLoading={photosLoading}
+          onSubmit={async values => { await updateMutation.mutateAsync(values as PropertyCreate); }}
           isLoading={updateMutation.isPending}
-          autoSave
         />
       )}
 
-      {activeTab === 'photos' && (
-        <div className="card p-6">
-          {photosLoading ? (
-            <div className="text-gray-400 text-center py-8">Загрузка фото...</div>
-          ) : (
-            <PhotoLibrary propertyId={id!} photos={photos} property={property} />
-          )}
-        </div>
-      )}
-
-      {activeTab === 'preview' && (
-        <div>
-          {!slides ? (
-            <div className="card p-12 text-center space-y-4">
-              <Layers className="w-12 h-12 mx-auto text-gray-300" />
-              <div>
-                <p className="text-gray-600 font-medium">Слайды ещё не сгенерированы</p>
-                <p className="text-gray-400 text-sm mt-1">
-                  Нажмите «Создать слайды» чтобы увидеть предпросмотр
-                </p>
-              </div>
-              <button onClick={generateLayout} disabled={layoutLoading} className="btn-primary mx-auto">
-                <RefreshCw className={`w-4 h-4 ${layoutLoading ? 'animate-spin' : ''}`} />
-                Создать слайды
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-4 pb-4">
-              <p className="text-sm text-gray-500">
-                {slides.length} слайдов · Перетаскивайте слайды для изменения порядка
-              </p>
-              <DndContext
-                sensors={sensors}
-                collisionDetection={closestCenter}
-                onDragEnd={handleSlideDragEnd}
-              >
-                <SortableContext items={slides.map(s => s.id)} strategy={verticalListSortingStrategy}>
-                  <div className="space-y-4">
-                    {slides.map((slide, i) => (
-                      <SortableSlide
-                        key={slide.id}
-                        slide={slide}
-                        property={property}
-                        photoMap={photoMap}
-                        index={i}
-                      />
-                    ))}
-                  </div>
-                </SortableContext>
-              </DndContext>
-            </div>
-          )}
-        </div>
+      {activeTab === 'editor' && (
+        <SlideEditor
+          slides={slides}
+          property={property}
+          photoMap={photoMap}
+          onSlidesChange={handleSlidesChange}
+          onTextChange={handleTextChange}
+          onGenerate={generateLayout}
+          layoutLoading={layoutLoading}
+          slidesEdited={slidesEdited}
+        />
       )}
     </div>
   );
