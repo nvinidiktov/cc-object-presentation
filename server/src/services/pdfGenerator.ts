@@ -6,10 +6,10 @@ import Jimp from 'jimp';
 import fs from 'fs';
 import path from 'path';
 
-// Max image dimensions for PDF (139mm at 150dpi ≈ 821px)
-const PDF_IMG_MAX_W = 900;
-const PDF_IMG_MAX_H = 700;
-const PDF_IMG_QUALITY = 72;
+// Max image dimensions for PDF (optimized for ~10MB file size)
+const PDF_IMG_MAX_W = 700;
+const PDF_IMG_MAX_H = 500;
+const PDF_IMG_QUALITY = 55;
 
 // Cache of optimized data URLs, populated before HTML generation
 let optimizedPhotos: Map<string, string> = new Map();
@@ -77,9 +77,10 @@ function fitTextToSlide(
   contentHeightMm: number = PDF.CONTENT_HEIGHT_MM,
 ): TextFitResult {
   const tiers: TextFitResult[] = [
-    { fontSize: PDF.FONT_SIZE_BODY, lineHeight: PDF.LINE_HEIGHT, marginBottom: `${PDF.PARAGRAPH_MARGIN_MM}mm` },
-    { fontSize: PDF.FONT_SIZE_BODY - 1, lineHeight: PDF.LINE_HEIGHT, marginBottom: `${PDF.PARAGRAPH_MARGIN_MM}mm` },
-    { fontSize: PDF.FONT_SIZE_BODY_MIN, lineHeight: PDF.LINE_HEIGHT_COMPACT, marginBottom: '2mm' },
+    { fontSize: 20, lineHeight: 1.5, marginBottom: '5mm' },   // Tier 1: стандарт
+    { fontSize: 19, lineHeight: 1.4, marginBottom: '4mm' },   // Tier 2: чуть меньше
+    { fontSize: 18, lineHeight: 1.3, marginBottom: '3mm' },   // Tier 3: компактнее
+    { fontSize: 17, lineHeight: 1.2, marginBottom: '2mm' },   // Tier 4: крайний случай
   ];
 
   for (const tier of tiers) {
@@ -348,7 +349,7 @@ const CSS = `
   .body-p:last-child { margin-bottom: 0; }
 
   /* ── Advantages ── */
-  .adv-list { list-style: disc; padding-left: 5mm; font-size: ${PDF.FONT_SIZE_BULLET}pt; line-height: ${PDF.LINE_HEIGHT}; }
+  .adv-list { list-style: disc; padding-left: 8mm; font-size: ${PDF.FONT_SIZE_BULLET}pt; line-height: ${PDF.LINE_HEIGHT}; }
   .adv-item { margin-bottom: 2.5mm; }
 
   /* ── Photos column ── */

@@ -16,7 +16,7 @@ import {
   SortableContext,
   sortableKeyboardCoordinates,
   arrayMove,
-  verticalListSortingStrategy,
+  rectSortingStrategy,
 } from '@dnd-kit/sortable';
 import { Slide, Photo, Property } from 'shared';
 import { photoUrl } from '../lib/api';
@@ -220,9 +220,9 @@ export default function SlideEditor({
       >
         <SortableContext
           items={slides.map(s => s.id)}
-          strategy={verticalListSortingStrategy}
+          strategy={rectSortingStrategy}
         >
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
             {slides.map((slide, i) => (
               <SlideEditorCard
                 key={slide.id}

@@ -9,11 +9,11 @@ import React, { useEffect, useRef, useCallback, useState } from 'react';
 
 const schema = z.object({
   name: z.string().min(1, 'Укажите название объекта'),
-  address: z.string().default(''),
+  address: z.string().min(1, 'Укажите адрес'),
   metro: z.string().default(''),
-  price: z.string().default(''),
-  area: z.string().default(''),
-  floor: z.string().default(''),
+  price: z.string().min(1, 'Укажите стоимость'),
+  area: z.string().min(1, 'Укажите площадь'),
+  floor: z.string().min(1, 'Укажите этаж'),
   finish: z.string().default(''),
   deliveryDate: z.string().default(''),
   extraFields: z.array(z.object({ label: z.string(), value: z.string() })).default([]),
@@ -116,7 +116,12 @@ export default function PropertyForm({
       floor: defaultValues?.floor ?? '',
       finish: defaultValues?.finish ?? '',
       deliveryDate: defaultValues?.deliveryDate ?? '',
-      extraFields: defaultValues?.extraFields ?? [],
+      extraFields: (defaultValues?.extraFields && defaultValues.extraFields.length > 0)
+        ? defaultValues.extraFields
+        : [
+            { label: 'Высота потолков', value: '' },
+            { label: 'Паркинг', value: '' },
+          ],
       advantagesText: advantagesToText(defaultValues?.advantages ?? []),
       description: defaultValues?.description ?? '',
     },
@@ -260,27 +265,31 @@ export default function PropertyForm({
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="label">Адрес</label>
-            <input {...register('address')} className="input" placeholder="ул. Примерная, 1" />
+            <label className="label">Адрес <span className="text-red-500">*</span></label>
+            <input {...register('address')} className="input" placeholder="г. Москва, ул. Саульская, д. 1" />
+            {errors.address && <p className="field-error">{errors.address.message}</p>}
           </div>
           <div>
             <label className="label">Метро</label>
-            <input {...register('metro')} className="input" placeholder="Новогиреево" />
+            <input {...register('metro')} className="input" placeholder="м. Арбатская (5 мин. пешком), м. Тверская (5 мин. пешком)" />
           </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div>
-            <label className="label">Стоимость</label>
-            <input {...register('price')} className="input" placeholder="6 500 000 ₽" />
+            <label className="label">Стоимость <span className="text-red-500">*</span></label>
+            <input {...register('price')} className="input" placeholder="70 000 000 руб." />
+            {errors.price && <p className="field-error">{errors.price.message}</p>}
           </div>
           <div>
-            <label className="label">Площадь</label>
-            <input {...register('area')} className="input" placeholder="45,2 м²" />
+            <label className="label">Площадь <span className="text-red-500">*</span></label>
+            <input {...register('area')} className="input" placeholder="120 кв.м." />
+            {errors.area && <p className="field-error">{errors.area.message}</p>}
           </div>
           <div>
-            <label className="label">Этаж</label>
-            <input {...register('floor')} className="input" placeholder="12 из 17" />
+            <label className="label">Этаж <span className="text-red-500">*</span></label>
+            <input {...register('floor')} className="input" placeholder="12/25" />
+            {errors.floor && <p className="field-error">{errors.floor.message}</p>}
           </div>
           <div>
             <label className="label">Отделка</label>
@@ -364,28 +373,8 @@ export default function PropertyForm({
         </p>
       </section>
 
-      {/* ─── Описание объекта ─────────────────────────────────────────────────── */}
-      <section className="card p-6 space-y-4">
-        <h2 className="font-semibold text-gray-900 text-base border-b border-gray-100 pb-3">
-          Описание объекта
-          <span className="ml-2 text-xs font-normal text-gray-400">
-            (текст по слайдам — разбивка обновляется в реальном времени)
-          </span>
-        </h2>
-
-        <p className="text-xs text-gray-400 mb-2">
-          Разделяйте абзацы пустой строкой.
-          Вставка из Google Docs / Word — форматирование сохранится.
-          Разбивку по слайдам увидите во вкладке «Редактор слайдов».
-        </p>
-        <textarea
-          {...register('description')}
-          className="input resize-none font-mono text-sm"
-          rows={12}
-          placeholder="Опишите объект. Каждый абзац, разделённый пустой строкой, будет распределён по слайдам."
-          onPaste={e => handlePaste(e, 'description')}
-        />
-      </section>
+      {/* Описание редактируется во вкладке «Редактор слайдов» */}
+      <input type="hidden" {...register('description')} />
 
       {/* ─── Кнопка сабмит (только в режиме создания) ─────────────────────── */}
       {!autoSave && (

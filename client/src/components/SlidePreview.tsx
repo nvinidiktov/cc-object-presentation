@@ -21,9 +21,10 @@ function fitTextToSlide(
   contentHeightMm: number = PDF.CONTENT_HEIGHT_MM,
 ): TextFitResult {
   const tiers: TextFitResult[] = [
-    { fontSize: PDF.FONT_SIZE_BODY, lineHeight: PDF.LINE_HEIGHT, marginBottom: PDF.PARAGRAPH_MARGIN_MM },
-    { fontSize: PDF.FONT_SIZE_BODY - 1, lineHeight: PDF.LINE_HEIGHT, marginBottom: PDF.PARAGRAPH_MARGIN_MM },
-    { fontSize: PDF.FONT_SIZE_BODY_MIN, lineHeight: PDF.LINE_HEIGHT_COMPACT, marginBottom: 2 },
+    { fontSize: 20, lineHeight: 1.5, marginBottom: 5 },   // Tier 1: стандарт
+    { fontSize: 19, lineHeight: 1.4, marginBottom: 4 },   // Tier 2: чуть меньше
+    { fontSize: 18, lineHeight: 1.3, marginBottom: 3 },   // Tier 3: компактнее
+    { fontSize: 17, lineHeight: 1.2, marginBottom: 2 },   // Tier 4: крайний случай
   ];
 
   for (const tier of tiers) {
@@ -186,7 +187,7 @@ function AdvantagesSlide({ advantages, photos }: { advantages: string[]; photos:
           <div style={{ fontWeight: 'bold', fontSize: pt(PDF.FONT_SIZE_HEADING), color: PDF.COLOR_TEXT, marginBottom: px(4), letterSpacing: '0.3px' }}>
             ПРЕИМУЩЕСТВА
           </div>
-          <ul style={{ listStyle: 'disc', paddingLeft: px(5), fontSize: pt(fontSize), lineHeight: lh }}>
+          <ul style={{ listStyle: 'disc', paddingLeft: px(8), fontSize: pt(fontSize), lineHeight: lh }}>
             {advantages.map((a, i) => (
               <li key={i} style={{ marginBottom: px(2.5) }}>{a}</li>
             ))}
