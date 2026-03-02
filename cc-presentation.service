@@ -7,7 +7,7 @@ Type=simple
 User=root
 WorkingDirectory=/opt/cc-presentation
 Environment=NODE_ENV=production
-Environment=PORT=80
+Environment=PORT=3001
 ExecStart=/usr/bin/pnpm --filter server start
 Restart=on-failure
 RestartSec=5
