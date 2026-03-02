@@ -6,7 +6,7 @@ import photosRouter from './routes/photos';
 import pdfRouter from './routes/pdf';
 
 const app = express();
-const PORT = process.env.PORT ?? 3001;
+const PORT = Number(process.env.PORT) || 3001;
 const IS_PROD = process.env.NODE_ENV === 'production';
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
