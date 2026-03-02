@@ -9,6 +9,7 @@ export interface ExtraField {
 
 export interface Property {
   id: string;
+  userId: string;        // Telegram-никнейм владельца
   // Поля для титульного слайда
   name: string;          // Название ЖК / объект
   address: string;       // Адрес
@@ -27,7 +28,7 @@ export interface Property {
   updatedAt: number;
 }
 
-export type PropertyCreate = Omit<Property, 'id' | 'createdAt' | 'updatedAt'>;
+export type PropertyCreate = Omit<Property, 'id' | 'userId' | 'createdAt' | 'updatedAt'>;
 export type PropertyUpdate = Partial<PropertyCreate>;
 
 // ─── Photo (фото объекта) ────────────────────────────────────────────────────

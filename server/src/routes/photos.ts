@@ -8,6 +8,15 @@ import { Photo, PhotoType } from 'shared';
 
 const router = Router({ mergeParams: true });
 
+// Ownership check: verify the property belongs to the requesting user
+router.use((req: Request, res: Response, next) => {
+  const prop = db.getProperty(req.params.id);
+  if (!prop) return res.status(404).json({ error: 'Property not found' });
+  const userId = (req as any).userId;
+  if (prop.user_id && prop.user_id !== userId) return res.status(404).json({ error: 'Not found' });
+  next();
+});
+
 const upload = multer({
   dest: TMP_PATH,
   limits: { fileSize: 20 * 1024 * 1024 },

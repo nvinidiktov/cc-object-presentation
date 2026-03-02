@@ -8,9 +8,19 @@ import fs from 'fs';
 
 const router = Router({ mergeParams: true });
 
+// Ownership check
+router.use((req: Request, res: Response, next) => {
+  const prop = db.getProperty(req.params.id);
+  if (!prop) return res.status(404).json({ error: 'Not found' });
+  const userId = (req as any).userId;
+  if (prop.user_id && prop.user_id !== userId) return res.status(404).json({ error: 'Not found' });
+  next();
+});
+
 function rowToProperty(row: any): Property {
   return {
     id: row.id,
+    userId: row.user_id ?? '',
     name: row.name ?? '',
     address: row.address ?? '',
     metro: row.metro ?? '',

@@ -8,6 +8,7 @@ const router = Router();
 function toProperty(row: any): Property {
   return {
     id: row.id,
+    userId: row.user_id ?? '',
     name: row.name ?? '',
     address: row.address ?? '',
     metro: row.metro ?? '',
@@ -24,15 +25,20 @@ function toProperty(row: any): Property {
   };
 }
 
-router.get('/', (_req: Request, res: Response) => {
-  res.json({ data: db.getProperties().map(toProperty) });
+router.get('/', (req: Request, res: Response) => {
+  const userId = (req as any).userId;
+  const all = db.getProperties().map(toProperty);
+  const filtered = userId ? all.filter(p => p.userId === userId) : [];
+  res.json({ data: filtered });
 });
 
 router.post('/', (req: Request, res: Response) => {
   const body: PropertyCreate = req.body;
   const now = Math.floor(Date.now() / 1000);
+  const userId = (req as any).userId;
   const prop = db.insertProperty({
     id: uuid(),
+    user_id: userId,
     name: body.name ?? '',
     address: body.address ?? '',
     metro: body.metro ?? '',
@@ -53,12 +59,16 @@ router.post('/', (req: Request, res: Response) => {
 router.get('/:id', (req: Request, res: Response) => {
   const row = db.getProperty(req.params.id);
   if (!row) return res.status(404).json({ error: 'Not found' });
+  const userId = (req as any).userId;
+  if (row.user_id && row.user_id !== userId) return res.status(404).json({ error: 'Not found' });
   res.json({ data: toProperty(row) });
 });
 
 router.patch('/:id', (req: Request, res: Response) => {
   const existing = db.getProperty(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Not found' });
+  const userId = (req as any).userId;
+  if (existing.user_id && existing.user_id !== userId) return res.status(404).json({ error: 'Not found' });
   const body = req.body;
   const now = Math.floor(Date.now() / 1000);
   const updated = db.updateProperty(req.params.id, {
@@ -79,7 +89,10 @@ router.patch('/:id', (req: Request, res: Response) => {
 });
 
 router.delete('/:id', (req: Request, res: Response) => {
-  if (!db.getProperty(req.params.id)) return res.status(404).json({ error: 'Not found' });
+  const row = db.getProperty(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  const userId = (req as any).userId;
+  if (row.user_id && row.user_id !== userId) return res.status(404).json({ error: 'Not found' });
   db.deleteProperty(req.params.id);
   res.json({ data: { deleted: true } });
 });

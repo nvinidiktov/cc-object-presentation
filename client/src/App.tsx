@@ -3,8 +3,14 @@ import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import PropertyCreate from './pages/PropertyCreate';
 import PropertyEdit from './pages/PropertyEdit';
+import LoginPage from './pages/LoginPage';
+import { useAuthStore } from './stores/authStore';
 
 export default function App() {
+  const userId = useAuthStore((s) => s.userId);
+
+  if (!userId) return <LoginPage />;
+
   return (
     <BrowserRouter>
       <Routes>

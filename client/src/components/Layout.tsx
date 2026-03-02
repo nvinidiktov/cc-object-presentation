@@ -1,9 +1,12 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { Building2, Plus } from 'lucide-react';
+import { Building2, Plus, LogOut } from 'lucide-react';
+import { useAuthStore } from '../stores/authStore';
 
 export default function Layout() {
   const location = useLocation();
   const isNew = location.pathname === '/new';
+  const userId = useAuthStore((s) => s.userId);
+  const logout = useAuthStore((s) => s.logout);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -14,12 +17,18 @@ export default function Layout() {
             <Building2 className="w-5 h-5 text-red-600" />
             <span>CC Презентации</span>
           </Link>
-          {!isNew && (
-            <Link to="/new" className="btn-primary text-sm">
-              <Plus className="w-4 h-4" />
-              Новый объект
-            </Link>
-          )}
+          <div className="flex items-center gap-3">
+            {!isNew && (
+              <Link to="/new" className="btn-primary text-sm">
+                <Plus className="w-4 h-4" />
+                Новый объект
+              </Link>
+            )}
+            <span className="text-sm text-gray-500">@{userId}</span>
+            <button onClick={logout} className="text-gray-400 hover:text-gray-600 transition-colors" title="Выйти">
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </header>
 

@@ -3,6 +3,14 @@ import { Property, PropertyCreate, PropertyUpdate, Photo, PhotoType, LayoutResul
 
 const api = axios.create({ baseURL: '/api' });
 
+api.interceptors.request.use((config) => {
+  const userId = localStorage.getItem('userId') || '';
+  if (userId) {
+    config.headers['X-User-Id'] = userId;
+  }
+  return config;
+});
+
 // ─── Properties ───────────────────────────────────────────────────────────────
 
 export const propertiesApi = {

@@ -22,6 +22,12 @@ app.use(
   })
 );
 
+// ─── User identity from header ───────────────────────────────────────────────
+app.use('/api', (req, _res, next) => {
+  (req as any).userId = (req.headers['x-user-id'] as string) || '';
+  next();
+});
+
 // ─── API Routes ───────────────────────────────────────────────────────────────
 app.use('/api/properties', propertiesRouter);
 app.use('/api/properties/:id/photos', photosRouter);
