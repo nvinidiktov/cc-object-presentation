@@ -21,7 +21,7 @@ import {
 import { Slide, Photo, Property } from 'shared';
 import { photoUrl } from '../lib/api';
 import SlideEditorCard from './SlideEditorCard';
-import { Layers, RefreshCw } from 'lucide-react';
+import { Layers, RefreshCw, FileDown } from 'lucide-react';
 
 interface Props {
   slides: Slide[] | null;
@@ -30,6 +30,8 @@ interface Props {
   onSlidesChange: (slides: Slide[]) => void;
   onTextChange: (slideId: string, paragraphs: string[]) => void;
   onGenerate: () => void;
+  onExportPdf: () => void;
+  pdfLoading: boolean;
   layoutLoading: boolean;
   slidesEdited: boolean;
 }
@@ -41,6 +43,8 @@ export default function SlideEditor({
   onSlidesChange,
   onTextChange,
   onGenerate,
+  onExportPdf,
+  pdfLoading,
   layoutLoading,
   slidesEdited,
 }: Props) {
@@ -196,19 +200,29 @@ export default function SlideEditor({
         <p className="text-sm text-gray-500">
           {slides.length} слайдов · Перетаскивайте слайды и фото для изменения порядка
         </p>
-        <button
-          onClick={() => {
-            if (slidesEdited && !window.confirm('Все ручные изменения будут потеряны. Пересоздать слайды?')) {
-              return;
-            }
-            onGenerate();
-          }}
-          disabled={layoutLoading}
-          className="btn-secondary text-xs"
-        >
-          <RefreshCw className={`w-4 h-4 ${layoutLoading ? 'animate-spin' : ''}`} />
-          Обновить слайды
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              if (slidesEdited && !window.confirm('Все ручные изменения будут потеряны. Пересоздать слайды?')) {
+                return;
+              }
+              onGenerate();
+            }}
+            disabled={layoutLoading}
+            className="btn-secondary text-xs"
+          >
+            <RefreshCw className={`w-4 h-4 ${layoutLoading ? 'animate-spin' : ''}`} />
+            Обновить слайды
+          </button>
+          <button
+            onClick={onExportPdf}
+            disabled={pdfLoading}
+            className="btn-primary text-xs"
+          >
+            <FileDown className="w-4 h-4" />
+            {pdfLoading ? 'Генерация...' : 'Скачать PDF'}
+          </button>
+        </div>
       </div>
 
       <DndContext

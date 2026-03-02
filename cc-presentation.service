@@ -1,0 +1,16 @@
+[Unit]
+Description=CC Object Presentation
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/cc-presentation
+Environment=NODE_ENV=production
+Environment=PORT=80
+ExecStart=/usr/bin/pnpm --filter server start
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

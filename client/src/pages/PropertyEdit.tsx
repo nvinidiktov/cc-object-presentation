@@ -8,10 +8,8 @@ import SlideEditor from '../components/SlideEditor';
 import { PropertyCreate, Photo, Slide } from 'shared';
 import {
   ChevronLeft,
-  FileDown,
   Layers,
   PencilLine,
-  RefreshCw,
   AlertTriangle,
 } from 'lucide-react';
 
@@ -158,25 +156,7 @@ export default function PropertyEdit() {
           </h1>
         </div>
 
-        {/* Actions */}
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <button
-            onClick={generateLayout}
-            disabled={layoutLoading}
-            className="btn-secondary text-sm"
-          >
-            <RefreshCw className={`w-4 h-4 ${layoutLoading ? 'animate-spin' : ''}`} />
-            {slides ? 'Обновить слайды' : 'Создать слайды'}
-          </button>
-          <button
-            onClick={handleExportPdf}
-            disabled={pdfLoading}
-            className="btn-primary text-sm"
-          >
-            <FileDown className="w-4 h-4" />
-            {pdfLoading ? 'Генерация...' : 'Скачать PDF'}
-          </button>
-        </div>
+        {/* Actions moved to SlideEditor */}
       </div>
 
       {/* Warnings */}
@@ -234,6 +214,8 @@ export default function PropertyEdit() {
           onSlidesChange={handleSlidesChange}
           onTextChange={handleTextChange}
           onGenerate={generateLayout}
+          onExportPdf={handleExportPdf}
+          pdfLoading={pdfLoading}
           layoutLoading={layoutLoading}
           slidesEdited={slidesEdited}
         />

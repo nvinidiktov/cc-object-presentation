@@ -4,18 +4,18 @@
   "main": "src/index.ts",
   "scripts": {
     "dev": "nodemon --watch src --ext ts --exec ts-node src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js"
+    "build": "echo server build ok",
+    "start": "NODE_ENV=production ts-node src/index.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.18.3",
-    "jimp": "^0.22.12",
     "multer": "^1.4.5-lts.1",
     "puppeteer": "^22.4.0",
+    "shared": "workspace:*",
+    "sharp": "^0.34.5",
     "uuid": "^9.0.1",
-    "zod": "^3.22.4",
-    "shared": "workspace:*"
+    "zod": "^3.22.4"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

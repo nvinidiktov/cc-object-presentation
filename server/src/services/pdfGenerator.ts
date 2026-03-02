@@ -2,27 +2,48 @@ import puppeteer from 'puppeteer';
 import { Property, Photo, Slide } from 'shared';
 import { PDF, LINE_HEIGHT_MM, CHAR_WIDTH_MM, formatPrice } from 'shared';
 import { getImagePath } from './imageProcessor';
-import Jimp from 'jimp';
+import sharp from 'sharp';
 import fs from 'fs';
 import path from 'path';
 
-// Max image dimensions for PDF (optimized for ~8-10MB file size)
-const PDF_IMG_MAX_W = 600;
-const PDF_IMG_MAX_H = 420;
-const PDF_IMG_QUALITY = 42;
+// ─── Per-slide-type image dimensions (mozjpeg via Sharp) ─────────────────────
+// Chrome PDF renderer = 96 DPI: 1mm ≈ 3.78 px
+// Подаём РОВНО столько пикселей, сколько Chrome отрендерит — без излишков.
 
-// Cache of optimized data URLs, populated before HTML generation
-let optimizedPhotos: Map<string, string> = new Map();
+// Fullscreen/floorplan: (297-10)×(210-10)mm = 287×200mm → 1085×756px @ 96DPI
+const IMG_FULLSCREEN_W = 1090;
+const IMG_FULLSCREEN_H = 760;
+const IMG_FULLSCREEN_Q = 50;
 
-async function optimizePhotoForPdf(filename: string): Promise<string> {
+// Content/advantages/title/grid(3-4): 139×96.5mm → 525×365px @ 96DPI
+const IMG_REGULAR_W = 530;
+const IMG_REGULAR_H = 370;
+const IMG_REGULAR_Q = 50;
+
+// Grid (2 фото, одна строка на всю высоту): 139×198mm → 530×750px @ 96DPI
+const IMG_GRID_TALL_W = 530;
+const IMG_GRID_TALL_H = 750;
+const IMG_GRID_TALL_Q = 50;
+
+// Cache of optimized data URLs per size category
+let optimizedFullscreen: Map<string, string> = new Map();
+let optimizedRegular: Map<string, string> = new Map();
+let optimizedGridTall: Map<string, string> = new Map();
+
+/**
+ * Оптимизирует фото: crop + resize до точных размеров контейнера.
+ * fit: 'cover' обрезает фото до нужного аспекта ДО вставки в HTML,
+ * чтобы Chrome не кропил на лету (иначе JPEG passthrough ломается
+ * и Chrome сохраняет пиксели как FlateDecode — раздувает PDF в 10-20x).
+ */
+async function optimizePhoto(filename: string, w: number, h: number, quality: number): Promise<string> {
   const filePath = getImagePath(filename);
   if (!fs.existsSync(filePath)) return '';
   try {
-    const image = await Jimp.read(filePath);
-    if (image.getWidth() > PDF_IMG_MAX_W || image.getHeight() > PDF_IMG_MAX_H) {
-      image.scaleToFit(PDF_IMG_MAX_W, PDF_IMG_MAX_H);
-    }
-    const buffer = await image.quality(PDF_IMG_QUALITY).getBufferAsync(Jimp.MIME_JPEG);
+    const buffer = await sharp(filePath)
+      .resize(w, h, { fit: 'cover', position: 'centre' })
+      .jpeg({ quality, mozjpeg: true })
+      .toBuffer();
     return `data:image/jpeg;base64,${buffer.toString('base64')}`;
   } catch {
     const data = fs.readFileSync(filePath);
@@ -30,8 +51,14 @@ async function optimizePhotoForPdf(filename: string): Promise<string> {
   }
 }
 
-function photoDataUrl(filename: string): string {
-  return optimizedPhotos.get(filename) || '';
+type PhotoSize = 'regular' | 'fullscreen' | 'grid-tall';
+
+function photoDataUrl(filename: string, size: PhotoSize = 'regular'): string {
+  switch (size) {
+    case 'fullscreen': return optimizedFullscreen.get(filename) || optimizedRegular.get(filename) || '';
+    case 'grid-tall':  return optimizedGridTall.get(filename) || optimizedRegular.get(filename) || '';
+    default:           return optimizedRegular.get(filename) || '';
+  }
 }
 
 // ─── Overflow detection & auto-shrink ────────────────────────────────────────
@@ -77,18 +104,18 @@ function fitTextToSlide(
   contentHeightMm: number = PDF.CONTENT_HEIGHT_MM,
 ): TextFitResult {
   const tiers: TextFitResult[] = [
-    { fontSize: 20, lineHeight: 1.2,  marginBottom: '3mm' },    // Tier 1: стандарт
-    { fontSize: 19, lineHeight: 1.15, marginBottom: '2.5mm' },  // Tier 2: чуть меньше
-    { fontSize: 18, lineHeight: 1.1,  marginBottom: '2mm' },    // Tier 3: компактнее
-    { fontSize: 17, lineHeight: 1.05, marginBottom: '1.5mm' },  // Tier 4: ещё компактнее
-    { fontSize: 16, lineHeight: 1.0,  marginBottom: '1mm' },    // Tier 5: крайний случай
+    { fontSize: 20, lineHeight: 1.2,  marginBottom: '8mm' },    // Tier 1: стандарт (пустая строка)
+    { fontSize: 19, lineHeight: 1.15, marginBottom: '7mm' },    // Tier 2: чуть меньше
+    { fontSize: 18, lineHeight: 1.1,  marginBottom: '6mm' },    // Tier 3: компактнее
+    { fontSize: 17, lineHeight: 1.05, marginBottom: '5mm' },    // Tier 4: ещё компактнее
+    { fontSize: 16, lineHeight: 1.0,  marginBottom: '4mm' },    // Tier 5: крайний случай
   ];
 
   for (const tier of tiers) {
     const height = estimateTextHeightWithParams(
       paragraphs, colWidthMm, tier.fontSize, tier.lineHeight, parseFloat(tier.marginBottom),
     );
-    if (height <= contentHeightMm * 0.92) {
+    if (height <= contentHeightMm * 0.88) {
       return tier;
     }
   }
@@ -108,6 +135,23 @@ function estimateTextHeight(paragraphs: string[], colWidthMm: number): number {
   return lines * LINE_HEIGHT_MM;
 }
 
+// ─── Title name auto-shrink ──────────────────────────────────────────────────
+
+/**
+ * Подбирает размер шрифта для названия, чтобы оно помещалось в одну строку.
+ * Уменьшает от 36pt до минимум 22pt.
+ */
+function fitTitleName(name: string, maxWidthMm: number): number {
+  const maxFontSize = PDF.FONT_SIZE_NAME; // 36pt
+  const minFontSize = 22;
+  for (let fs = maxFontSize; fs >= minFontSize; fs -= 2) {
+    const charW = CHAR_WIDTH_MM * (fs / PDF.FONT_SIZE_BODY);
+    const charsPerLine = Math.floor(maxWidthMm / charW);
+    if (name.length <= charsPerLine) return fs;
+  }
+  return minFontSize;
+}
+
 // ─── Title slide ─────────────────────────────────────────────────────────────
 
 function renderTitleSlide(property: Property, photos: Photo[]): string {
@@ -125,13 +169,16 @@ function renderTitleSlide(property: Property, photos: Photo[]): string {
   // Форматируем цену: убираем "Стоимость:", разбиваем по разрядам
   const priceFormatted = property.price ? formatPrice(property.price) : '';
 
+  const titleName = property.name || 'Презентация объекта';
+  const titleFontSize = fitTitleName(titleName, PDF.TITLE_TEXT_WIDTH_MM);
+
   return `
     <div class="slide">
       <div class="slide-body" style="gap:${PDF.COLUMN_GAP_MM}mm">
 
         <!-- LEFT col: name / address / metro / price / table -->
         <div class="title-left">
-          <div class="title-name">${property.name || ''}</div>
+          <div class="title-name" style="font-size:${titleFontSize}pt">${titleName}</div>
           ${property.address ? `<div class="title-sub">${property.address}</div>` : ''}
           ${property.metro   ? `<div class="title-sub">${property.metro}</div>` : ''}
           ${priceFormatted ? `<div class="price-badge">${priceFormatted}</div>` : ''}
@@ -225,7 +272,7 @@ function renderContentSlide(paragraphs: string[], photos: Photo[]): string {
 // ─── Fullscreen / floor plan ──────────────────────────────────────────────────
 
 function renderFullscreenSlide(photo: Photo): string {
-  return `<div class="slide fullscreen-slide"><img src="${photoDataUrl(photo.filename)}" class="fullscreen-img" /></div>`;
+  return `<div class="slide fullscreen-slide"><img src="${photoDataUrl(photo.filename, 'fullscreen')}" class="fullscreen-img" /></div>`;
 }
 
 // ─── Full-text slide (без фото, шрифт чуть крупнее) ──────────────────────────
@@ -256,9 +303,9 @@ function renderPhotoGridSlide(photos: Photo[]): string {
     return `<div class="slide photo-grid-slide"><div class="photo-grid"></div></div>`;
   }
 
-  // 1 фото → fullscreen
+  // 1 фото → fullscreen (высокое разрешение)
   if (cells.length === 1) {
-    return `<div class="slide fullscreen-slide"><img src="${photoDataUrl(cells[0].filename)}" class="fullscreen-img" /></div>`;
+    return `<div class="slide fullscreen-slide"><img src="${photoDataUrl(cells[0].filename, 'fullscreen')}" class="fullscreen-img" /></div>`;
   }
 
   // 2 фото → один ряд на всю высоту
@@ -266,8 +313,8 @@ function renderPhotoGridSlide(photos: Photo[]): string {
     return `
       <div class="slide photo-grid-slide">
         <div class="photo-grid" style="grid-template-rows: 1fr;">
-          <div class="grid-cell"><img src="${photoDataUrl(cells[0].filename)}" class="photo-img"/></div>
-          <div class="grid-cell"><img src="${photoDataUrl(cells[1].filename)}" class="photo-img"/></div>
+          <div class="grid-cell"><img src="${photoDataUrl(cells[0].filename, 'grid-tall')}" class="photo-img"/></div>
+          <div class="grid-cell"><img src="${photoDataUrl(cells[1].filename, 'grid-tall')}" class="photo-img"/></div>
         </div>
       </div>`;
   }
@@ -298,7 +345,7 @@ function renderPhotoGridSlide(photos: Photo[]): string {
 const CSS = `
   @page { size: 297mm 210mm; margin: 0; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: Arial, Helvetica, sans-serif; font-size: ${PDF.FONT_SIZE_BODY}pt; color: ${PDF.COLOR_TEXT}; background: white; }
+  body { font-family: 'Inter', Arial, Helvetica, sans-serif; font-size: ${PDF.FONT_SIZE_BODY}pt; color: ${PDF.COLOR_TEXT}; background: white; }
 
   .slide {
     width: 297mm; height: 210mm;
@@ -317,7 +364,7 @@ const CSS = `
     line-height: 1.2; margin-bottom: 3mm; text-transform: uppercase;
   }
   .title-sub {
-    font-size: ${PDF.FONT_SIZE_SUB}pt; color: #444; line-height: 1.4; margin-bottom: 1.5mm;
+    font-size: ${PDF.FONT_SIZE_SUB}pt; color: ${PDF.COLOR_TEXT}; line-height: 1.4; margin-bottom: 1.5mm;
   }
   .price-badge {
     display: flex; align-items: center; justify-content: center;
@@ -330,8 +377,8 @@ const CSS = `
 
   /* ── Property table ── */
   .prop-table { width: 100%; border-collapse: collapse; }
-  .prop-label { font-size: ${PDF.FONT_SIZE_TABLE_LABEL}pt; color: #555; padding: 2.5mm 4mm; width: 45%; vertical-align: middle; }
-  .prop-value { font-size: ${PDF.FONT_SIZE_TABLE_VALUE}pt; font-weight: bold; padding: 2.5mm 4mm; vertical-align: middle; }
+  .prop-label { font-size: ${PDF.FONT_SIZE_TABLE_LABEL}pt; color: ${PDF.COLOR_TEXT}; font-weight: bold; padding: 2.5mm 4mm; width: 45%; vertical-align: middle; }
+  .prop-value { font-size: ${PDF.FONT_SIZE_TABLE_VALUE}pt; padding: 2.5mm 4mm; vertical-align: middle; }
 
   /* ── Slide body (all slides) ── */
   .slide-body { display: flex; flex: 1; gap: ${PDF.COLUMN_GAP_MM}mm; overflow: hidden; }
@@ -356,12 +403,12 @@ const CSS = `
   /* ── Photos column ── */
   .photos-col { width: ${PDF.PHOTO_COLUMN_WIDTH_MM}mm; display: flex; flex-direction: column; gap: ${PDF.PHOTO_GAP_MM}mm; flex-shrink: 0; align-items: flex-end; justify-content: center; }
   .photo-frame { width: ${PDF.PHOTO_WIDTH_MM}mm; height: ${PDF.PHOTO_HEIGHT_MM}mm; overflow: hidden; flex-shrink: 0; }
-  .photo-img { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; }
+  .photo-img { width: 100%; height: 100%; object-fit: fill; display: block; }
   .photo-ph { width: 100%; height: 100%; background: #eee; }
 
   /* ── Fullscreen ── */
   .fullscreen-slide { padding: ${PDF.FULLSCREEN_PADDING_MM}mm; }
-  .fullscreen-img { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; }
+  .fullscreen-img { width: 100%; height: 100%; object-fit: fill; display: block; }
 
   /* ── Photo grid ── */
   .photo-grid-slide {}
@@ -391,7 +438,11 @@ function buildHtml(property: Property, photos: Photo[], slides: Slide[]): string
   });
 
   return `<!DOCTYPE html>
-<html lang="ru"><head><meta charset="UTF-8"/><style>${CSS}</style></head>
+<html lang="ru"><head><meta charset="UTF-8"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>${CSS}</style></head>
 <body>${htmls.join('')}</body></html>`;
 }
 
@@ -401,17 +452,44 @@ const PDF_OUT_DIR = path.join(__dirname, '..', '..', 'data', 'pdfs');
 if (!fs.existsSync(PDF_OUT_DIR)) fs.mkdirSync(PDF_OUT_DIR, { recursive: true });
 
 export async function generatePdf(property: Property, photos: Photo[], slides: Slide[]): Promise<string> {
-  // Pre-optimize all photos for PDF embedding (resize + compress)
-  const allFilenames = new Set<string>();
-  for (const photo of photos) {
-    if (photo.filename) allFilenames.add(photo.filename);
+  // Categorize photos by container size for pre-crop optimization
+  const photoMap = new Map(photos.map(p => [p.id, p]));
+  const fullscreenFilenames = new Set<string>();
+  const regularFilenames = new Set<string>();
+  const gridTallFilenames = new Set<string>();
+
+  for (const slide of slides) {
+    const isFullscreen = slide.type === 'fullscreen' || slide.type === 'floorplan';
+    // photo-grid с 2 фото → высокие ячейки (139×198mm)
+    const isGridTall = slide.type === 'photo-grid' && slide.photoIds.length === 2;
+    // photo-grid с 1 фото → fullscreen
+    const isGridSingle = slide.type === 'photo-grid' && slide.photoIds.length === 1;
+
+    for (const pid of slide.photoIds) {
+      const photo = photoMap.get(pid);
+      if (photo?.filename) {
+        if (isFullscreen || isGridSingle) fullscreenFilenames.add(photo.filename);
+        else if (isGridTall) gridTallFilenames.add(photo.filename);
+        else regularFilenames.add(photo.filename);
+      }
+    }
   }
-  optimizedPhotos = new Map();
-  await Promise.all(
-    Array.from(allFilenames).map(async (fn) => {
-      optimizedPhotos.set(fn, await optimizePhotoForPdf(fn));
-    })
-  );
+
+  // Pre-crop & optimize all photos with Sharp (mozjpeg) at exact container sizes
+  optimizedFullscreen = new Map();
+  optimizedRegular = new Map();
+  optimizedGridTall = new Map();
+  await Promise.all([
+    ...Array.from(fullscreenFilenames).map(async (fn) => {
+      optimizedFullscreen.set(fn, await optimizePhoto(fn, IMG_FULLSCREEN_W, IMG_FULLSCREEN_H, IMG_FULLSCREEN_Q));
+    }),
+    ...Array.from(regularFilenames).map(async (fn) => {
+      optimizedRegular.set(fn, await optimizePhoto(fn, IMG_REGULAR_W, IMG_REGULAR_H, IMG_REGULAR_Q));
+    }),
+    ...Array.from(gridTallFilenames).map(async (fn) => {
+      optimizedGridTall.set(fn, await optimizePhoto(fn, IMG_GRID_TALL_W, IMG_GRID_TALL_H, IMG_GRID_TALL_Q));
+    }),
+  ]);
 
   const html = buildHtml(property, photos, slides);
   const outPath = path.join(PDF_OUT_DIR, `${property.id}_${Date.now()}.pdf`);
@@ -423,7 +501,15 @@ export async function generatePdf(property: Property, photos: Photo[], slides: S
   try {
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'networkidle0' });
-    await page.pdf({ path: outPath, width: '297mm', height: '210mm', printBackground: true, margin: { top: 0, right: 0, bottom: 0, left: 0 } });
+    await page.pdf({
+      path: outPath,
+      width: '297mm',
+      height: '210mm',
+      printBackground: true,
+      margin: { top: 0, right: 0, bottom: 0, left: 0 },
+      outline: false,
+      tagged: false,
+    });
   } finally {
     await browser.close();
   }

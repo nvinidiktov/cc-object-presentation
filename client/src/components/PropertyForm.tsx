@@ -121,6 +121,9 @@ export default function PropertyForm({
         : [
             { label: 'Высота потолков', value: '' },
             { label: 'Паркинг', value: '' },
+            { label: 'Площадь участка', value: '' },
+            { label: 'Срок сдачи', value: '' },
+            { label: 'Виды', value: 'В тихий двор' },
             { label: 'Дополнительно', value: '' },
           ],
       advantagesText: advantagesToText(defaultValues?.advantages ?? []),
@@ -255,7 +258,7 @@ export default function PropertyForm({
         </h2>
 
         <div>
-          <label className="label">Название ЖК / Объект *</label>
+          <label className="label">Название ЖК / КП / Объект *</label>
           <input
             {...register('name')}
             className="input"
@@ -271,7 +274,7 @@ export default function PropertyForm({
             {errors.address && <p className="field-error">{errors.address.message}</p>}
           </div>
           <div>
-            <label className="label">Метро</label>
+            <label className="label">Метро / Шоссе</label>
             <input {...register('metro')} className="input" placeholder="м. Арбатская (5 м.п.), м. Тверская (5 м.п.), м. Таганская (3 м.п.)" />
           </div>
         </div>
@@ -296,10 +299,8 @@ export default function PropertyForm({
             <label className="label">Отделка</label>
             <input {...register('finish')} className="input" placeholder="Под ключ" />
           </div>
-          <div>
-            <label className="label">Срок сдачи</label>
-            <input {...register('deliveryDate')} className="input" placeholder="4 кв. 2025" />
-          </div>
+          {/* Срок сдачи перенесён в дополнительные поля */}
+          <input type="hidden" {...register('deliveryDate')} />
         </div>
 
         {/* ─── Дополнительные поля ──────────────────────────────────────────── */}

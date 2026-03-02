@@ -21,11 +21,11 @@ function fitTextToSlide(
   contentHeightMm: number = PDF.CONTENT_HEIGHT_MM,
 ): TextFitResult {
   const tiers: TextFitResult[] = [
-    { fontSize: 20, lineHeight: 1.2,  marginBottom: 3 },      // Tier 1: стандарт
-    { fontSize: 19, lineHeight: 1.15, marginBottom: 2.5 },    // Tier 2: чуть меньше
-    { fontSize: 18, lineHeight: 1.1,  marginBottom: 2 },      // Tier 3: компактнее
-    { fontSize: 17, lineHeight: 1.05, marginBottom: 1.5 },    // Tier 4: ещё компактнее
-    { fontSize: 16, lineHeight: 1.0,  marginBottom: 1 },      // Tier 5: крайний случай
+    { fontSize: 20, lineHeight: 1.2,  marginBottom: 8 },      // Tier 1: стандарт (пустая строка)
+    { fontSize: 19, lineHeight: 1.15, marginBottom: 7 },      // Tier 2: чуть меньше
+    { fontSize: 18, lineHeight: 1.1,  marginBottom: 6 },      // Tier 3: компактнее
+    { fontSize: 17, lineHeight: 1.05, marginBottom: 5 },      // Tier 4: ещё компактнее
+    { fontSize: 16, lineHeight: 1.0,  marginBottom: 4 },      // Tier 5: крайний случай
   ];
 
   for (const tier of tiers) {
@@ -40,7 +40,7 @@ function fitTextToSlide(
       }
       totalHeight += paraLines * lineHeightMm + tier.marginBottom;
     }
-    if (totalHeight <= contentHeightMm * 0.92) {
+    if (totalHeight <= contentHeightMm * 0.88) {
       return tier;
     }
   }
@@ -54,7 +54,7 @@ const S = {
     width: PREVIEW_WIDTH, height: px(PDF.PAGE_HEIGHT_MM),
     backgroundColor: '#fff',
     padding: `${px(PDF.MARGIN_TOP_MM)}px ${px(PDF.MARGIN_RIGHT_MM)}px ${px(PDF.MARGIN_BOTTOM_MM)}px ${px(PDF.MARGIN_LEFT_MM)}px`,
-    fontFamily: 'Arial, Helvetica, sans-serif',
+    fontFamily: "'Inter', Arial, Helvetica, sans-serif",
     overflow: 'hidden' as const, boxSizing: 'border-box' as const,
     display: 'flex', flexDirection: 'column' as const, flexShrink: 0,
   },
@@ -95,6 +95,19 @@ function PhotosColumn({ photos }: { photos: Photo[] }) {
   );
 }
 
+// ─── Title name auto-shrink ──────────────────────────────────────────────────
+
+function fitTitleName(name: string, maxWidthMm: number): number {
+  const maxFontSize = PDF.FONT_SIZE_NAME; // 36pt
+  const minFontSize = 22;
+  for (let fs = maxFontSize; fs >= minFontSize; fs -= 2) {
+    const charW = CHAR_WIDTH_MM * (fs / PDF.FONT_SIZE_BODY);
+    const charsPerLine = Math.floor(maxWidthMm / charW);
+    if (name.length <= charsPerLine) return fs;
+  }
+  return minFontSize;
+}
+
 // ─── Title slide ──────────────────────────────────────────────────────────────
 
 function TitleSlide({ property, photos }: { property: Property; photos: Photo[] }) {
@@ -107,6 +120,8 @@ function TitleSlide({ property, photos }: { property: Property; photos: Photo[] 
   ].filter(r => r.value?.trim());
 
   const priceFormatted = property.price ? formatPrice(property.price) : '';
+  const titleName = property.name || 'Презентация объекта';
+  const titleFontSize = fitTitleName(titleName, PDF.TITLE_TEXT_WIDTH_MM);
 
   return (
     <div style={S.slide}>
@@ -114,14 +129,14 @@ function TitleSlide({ property, photos }: { property: Property; photos: Photo[] 
 
         {/* LEFT */}
         <div style={{ width: px(PDF.TITLE_TEXT_WIDTH_MM), flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ fontWeight: 'bold', fontSize: pt(PDF.FONT_SIZE_NAME), color: PDF.COLOR_TEXT, lineHeight: 1.2, marginBottom: px(3), textTransform: 'uppercase' }}>
-            {property.name || 'Название объекта'}
+          <div style={{ fontWeight: 'bold', fontSize: pt(titleFontSize), color: PDF.COLOR_TEXT, lineHeight: 1.2, marginBottom: px(3), textTransform: 'uppercase' }}>
+            {titleName}
           </div>
           {property.address && (
-            <div style={{ fontSize: pt(PDF.FONT_SIZE_SUB), color: '#444', lineHeight: 1.4, marginBottom: px(1.5) }}>{property.address}</div>
+            <div style={{ fontSize: pt(PDF.FONT_SIZE_SUB), color: PDF.COLOR_TEXT, lineHeight: 1.4, marginBottom: px(1.5) }}>{property.address}</div>
           )}
           {property.metro && (
-            <div style={{ fontSize: pt(PDF.FONT_SIZE_SUB), color: '#444', lineHeight: 1.4, marginBottom: px(1.5) }}>{property.metro}</div>
+            <div style={{ fontSize: pt(PDF.FONT_SIZE_SUB), color: PDF.COLOR_TEXT, lineHeight: 1.4, marginBottom: px(1.5) }}>{property.metro}</div>
           )}
           {priceFormatted && (
             <div style={{
@@ -139,8 +154,8 @@ function TitleSlide({ property, photos }: { property: Property; photos: Photo[] 
               <tbody>
                 {tableRows.map((r, i) => (
                   <tr key={i} style={{ background: i % 2 === 0 ? PDF.COLOR_TABLE_BG : '#fff' }}>
-                    <td style={{ padding: `${px(2.5)}px ${px(4)}px`, color: '#555', fontSize: pt(PDF.FONT_SIZE_TABLE_LABEL), width: '44%', verticalAlign: 'middle' }}>{r.label}</td>
-                    <td style={{ padding: `${px(2.5)}px ${px(4)}px`, fontWeight: 'bold', fontSize: pt(PDF.FONT_SIZE_TABLE_VALUE), verticalAlign: 'middle' }}>{r.value}</td>
+                    <td style={{ padding: `${px(2.5)}px ${px(4)}px`, color: PDF.COLOR_TEXT, fontWeight: 'bold', fontSize: pt(PDF.FONT_SIZE_TABLE_LABEL), width: '44%', verticalAlign: 'middle' }}>{r.label}</td>
+                    <td style={{ padding: `${px(2.5)}px ${px(4)}px`, fontSize: pt(PDF.FONT_SIZE_TABLE_VALUE), verticalAlign: 'middle' }}>{r.value}</td>
                   </tr>
                 ))}
               </tbody>
@@ -210,7 +225,7 @@ function ContentSlide({ paragraphs, photos }: { paragraphs: string[]; photos: Ph
       <div style={S.body}>
         <div style={S.textCol}>
           {paragraphs.map((p, i) => (
-            <p key={i} style={{ fontSize: pt(fit.fontSize), marginBottom: px(fit.marginBottom), lineHeight: fit.lineHeight, textAlign: 'left', whiteSpace: 'pre-wrap' }}>{p}</p>
+            <p key={i} style={{ fontSize: pt(fit.fontSize), margin: 0, marginBottom: i < paragraphs.length - 1 ? px(fit.marginBottom) : 0, lineHeight: fit.lineHeight, textAlign: 'left', whiteSpace: 'pre-wrap' }}>{p}</p>
           ))}
         </div>
         <PhotosColumn photos={photos} />
@@ -240,7 +255,7 @@ function FullTextSlide({ paragraphs }: { paragraphs: string[] }) {
     <div style={S.slide}>
       <div style={S.textColFull}>
         {paragraphs.map((p, i) => (
-          <p key={i} style={{ fontSize: pt(fontSize), marginBottom: px(fit.marginBottom), lineHeight: fit.lineHeight, textAlign: 'left', whiteSpace: 'pre-wrap' }}>{p}</p>
+          <p key={i} style={{ fontSize: pt(fontSize), margin: 0, marginBottom: i < paragraphs.length - 1 ? px(fit.marginBottom) : 0, lineHeight: fit.lineHeight, textAlign: 'left', whiteSpace: 'pre-wrap' }}>{p}</p>
         ))}
       </div>
     </div>

@@ -1,4 +1,4 @@
-import Jimp from 'jimp';
+import sharp from 'sharp';
 import path from 'path';
 import fs from 'fs';
 import { v4 as uuid } from 'uuid';
@@ -23,8 +23,8 @@ const MAX_W = 2400;
 const MAX_H = 1600;
 
 /**
- * Processes an uploaded image: resizes to max 2400x1600, saves as JPEG quality 87
- * Uses jimp@0.22 (pure JavaScript — no native compilation needed)
+ * Processes an uploaded image: resizes to max 2400x1600, saves as JPEG quality 85 (mozjpeg)
+ * Uses sharp (native libvips + mozjpeg — fast & high-quality)
  */
 export async function processImage(
   inputPath: string,
@@ -33,24 +33,17 @@ export async function processImage(
   const filename = `${uuid()}.jpg`;
   const outputPath = path.join(UPLOADS_DIR, filename);
 
-  const image = await Jimp.read(inputPath);
-
-  // Scale down only if image exceeds max dimensions (never upscale)
-  if (image.getWidth() > MAX_W || image.getHeight() > MAX_H) {
-    image.scaleToFit(MAX_W, MAX_H); // jimp@0.22 API: two numbers, not an object
-  }
-
-  const width = image.getWidth();
-  const height = image.getHeight();
-
-  await image.quality(87).writeAsync(outputPath); // jimp@0.22 uses writeAsync
+  const result = await sharp(inputPath)
+    .resize(MAX_W, MAX_H, { fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: 85, mozjpeg: true })
+    .toFile(outputPath);
 
   // Remove multer temp file
   if (fs.existsSync(inputPath)) {
     try { fs.unlinkSync(inputPath); } catch (_) {}
   }
 
-  return { filename, width, height };
+  return { filename, width: result.width, height: result.height };
 }
 
 /**

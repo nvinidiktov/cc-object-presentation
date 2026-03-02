@@ -45,7 +45,7 @@ export const PDF = {
   FULLSCREEN_PADDING_MM: 5,
 
   // Шрифты (pt) — крупные для A4 ландшафтной презентации
-  FONT_FAMILY: 'Arial, sans-serif',
+  FONT_FAMILY: "'Inter', Arial, sans-serif",
   FONT_SIZE_NAME: 36,        // Название объекта на титуле (CAPS)
   FONT_SIZE_BODY: 20,        // Текст описания на контентных слайдах
   FONT_SIZE_BODY_FULL: 21,   // Текст на слайдах без фото (чуть крупнее)
@@ -58,7 +58,7 @@ export const PDF = {
   FONT_SIZE_BODY_MIN: 16,    // Минимальный шрифт при авто-сжатии (Tier 5)
   LINE_HEIGHT: 1.2,          // Основной межстрочный интервал
   LINE_HEIGHT_COMPACT: 1.05, // Компактный (для крайнего Tier авто-сжатия)
-  PARAGRAPH_MARGIN_MM: 3,    // Отступ между абзацами
+  PARAGRAPH_MARGIN_MM: 8,    // Отступ между абзацами (≈ пустая строка при 20pt)
 } as const;
 
 // ─── Text fitting constants ──────────────────────────────────────────────────
@@ -67,9 +67,9 @@ export const PDF = {
 // 20pt ≈ 7.06mm, × 1.2 = 8.47mm/строка
 export const LINE_HEIGHT_MM = 8.5;
 
-// Средняя ширина символа пропорционального Arial 20pt (кириллица)
-// Пропорциональный шрифт: ~0.41 × em, em ≈ 7.06mm → ~2.9mm
-export const CHAR_WIDTH_MM = 2.9;
+// Средняя ширина символа пропорционального Inter 20pt (кириллица)
+// Inter чуть шире Arial: ~0.43 × em, em ≈ 7.06mm → ~3.05mm
+export const CHAR_WIDTH_MM = 3.05;
 
 // Вычисляем, сколько символов/строк влезает в текстовую колонку
 export const MAX_LINES_CONTENT = Math.floor(PDF.CONTENT_HEIGHT_MM / LINE_HEIGHT_MM);

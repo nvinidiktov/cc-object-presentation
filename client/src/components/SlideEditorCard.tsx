@@ -1,10 +1,59 @@
-import React, { useCallback, useRef, useEffect } from 'react';
+import React, { useCallback, useRef, useEffect, useMemo } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Slide, Photo, Property, PDF } from 'shared';
+import { Slide, Photo, Property, PDF, CHAR_WIDTH_MM } from 'shared';
 import { GripVertical } from 'lucide-react';
 import PhotoDropSlot from './PhotoDropSlot';
 import { formatPrice } from 'shared';
+
+// ─── Оценка заполненности слайда текстом ────────────────────────────────────
+
+// Только тиры 1-3: ввод блокируется если текст не помещается при 18pt
+const TEXT_TIERS = [
+  { fontSize: 20, lineHeight: 1.2,  marginBottom: 8 },
+  { fontSize: 19, lineHeight: 1.15, marginBottom: 7 },
+  { fontSize: 18, lineHeight: 1.1,  marginBottom: 6 },
+];
+
+interface TextCapacity {
+  tier: number;       // 1-3 (какой тир нужен), 0 = не помещается
+  fillPercent: number; // % заполненности при Tier 1
+  fits: boolean;       // помещается ли в Tier 1-3 (до 18pt)
+}
+
+function estimateHeight(paragraphs: string[], colWidthMm: number, tier: typeof TEXT_TIERS[0]): number {
+  const adjustedCharWidth = CHAR_WIDTH_MM * (tier.fontSize / PDF.FONT_SIZE_BODY);
+  const cpl = Math.floor(colWidthMm / adjustedCharWidth);
+  const lineHeightMm = tier.fontSize * 0.353 * tier.lineHeight;
+  let totalHeight = 0;
+  for (const para of paragraphs) {
+    let paraLines = 0;
+    for (const line of para.split('\n')) {
+      paraLines += Math.max(1, Math.ceil(line.length / cpl));
+    }
+    totalHeight += paraLines * lineHeightMm + tier.marginBottom;
+  }
+  return totalHeight;
+}
+
+function checkTextCapacity(paragraphs: string[], colWidthMm: number): TextCapacity {
+  // Порог ниже чем в PDF (0.88) — запас чтобы текст точно поместился
+  const maxH = PDF.CONTENT_HEIGHT_MM * 0.80;
+
+  // Заполненность при Tier 1 (стандартный шрифт)
+  const tier1Height = estimateHeight(paragraphs, colWidthMm, TEXT_TIERS[0]);
+  const fillPercent = maxH > 0 ? Math.round((tier1Height / maxH) * 100) : 0;
+
+  // Определяем, какой тир нужен
+  for (let i = 0; i < TEXT_TIERS.length; i++) {
+    const h = estimateHeight(paragraphs, colWidthMm, TEXT_TIERS[i]);
+    if (h <= maxH) {
+      return { tier: i + 1, fillPercent, fits: true };
+    }
+  }
+
+  return { tier: 0, fillPercent, fits: false };
+}
 
 // ─── Метки типов слайдов ─────────────────────────────────────────────────────
 
@@ -51,6 +100,44 @@ function maxPhotos(type: string): number {
   }
 }
 
+// ─── Индикатор заполненности ─────────────────────────────────────────────────
+
+function FillIndicator({ capacity }: { capacity: TextCapacity }) {
+  const { tier, fillPercent } = capacity;
+
+  // Зелёный → жёлтый → оранжевый (красного нет — ввод блокируется до него)
+  let barColor = 'bg-green-400';
+  let textColor = 'text-green-700';
+  if (tier >= 3) {
+    barColor = 'bg-amber-400';
+    textColor = 'text-amber-700';
+  } else if (tier >= 2 || fillPercent > 70) {
+    barColor = 'bg-yellow-400';
+    textColor = 'text-yellow-700';
+  }
+
+  const clampedPercent = Math.min(fillPercent, 100);
+
+  const tierLabel = tier >= 2 ? `Шрифт уменьшен (${tier}/3)` : '';
+
+  return (
+    <div className="mt-1.5 space-y-0.5">
+      {/* Прогресс-бар */}
+      <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all duration-200 ${barColor}`}
+          style={{ width: `${clampedPercent}%` }}
+        />
+      </div>
+      {/* Текст */}
+      <div className={`flex justify-between text-[10px] ${textColor}`}>
+        <span>{fillPercent}% заполнено</span>
+        {tierLabel && <span className="font-medium">{tierLabel}</span>}
+      </div>
+    </div>
+  );
+}
+
 // ─── Props ───────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -94,6 +181,7 @@ const SlideEditorCard = React.memo(function SlideEditorCard({
   // Автоподстройка высоты textarea
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const textValue = (slide.paragraphs ?? []).join('\n\n');
+  const lastValidText = useRef(textValue);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -103,13 +191,37 @@ const SlideEditorCard = React.memo(function SlideEditorCard({
     }
   }, [textValue]);
 
+  // Определяем ширину колонки для текущего типа слайда
+  const colWidthMm = slide.type === 'full-text' ? PDF.CONTENT_WIDTH_MM : PDF.TEXT_COLUMN_WIDTH_MM;
+
+  // Оценка заполненности
+  const capacity = useMemo(
+    () => checkTextCapacity(slide.paragraphs ?? [], colWidthMm),
+    [slide.paragraphs, colWidthMm]
+  );
+
+  // Запоминаем последний валидный текст
+  useEffect(() => {
+    if (capacity.fits) {
+      lastValidText.current = textValue;
+    }
+  }, [textValue, capacity.fits]);
+
   const handleTextChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       const text = e.target.value;
-      const paragraphs = text.split(/\n\s*\n/).filter(p => p.trim());
-      onTextChange?.(slide.id, paragraphs);
+      // Разделяем на абзацы по двойному переводу строки, сохраняем пустые
+      const rawParagraphs = text.split(/\n\n/);
+      // Для проверки ёмкости — все абзацы (пустые тоже занимают место как отступ)
+      const cap = checkTextCapacity(rawParagraphs, colWidthMm);
+      if (!cap.fits) {
+        e.target.value = lastValidText.current;
+        return;
+      }
+
+      onTextChange?.(slide.id, rawParagraphs);
     },
-    [slide.id, onTextChange]
+    [slide.id, onTextChange, colWidthMm]
   );
 
   // ─── Фото-колонка (2 слота вертикально) ─────────────────────────────────
@@ -137,7 +249,7 @@ const SlideEditorCard = React.memo(function SlideEditorCard({
             {/* Инфо — только чтение */}
             <div style={{ width: TEXT_COL_PCT, flexShrink: 0 }} className="space-y-1.5">
               <div className="font-bold text-gray-900 uppercase" style={{ fontSize: '15px', lineHeight: 1.3 }}>
-                {property.name || 'Название объекта'}
+                {property.name || 'Презентация объекта'}
               </div>
               {property.address && (
                 <div className="text-gray-500" style={{ fontSize: '13px' }}>{property.address}</div>
@@ -153,11 +265,14 @@ const SlideEditorCard = React.memo(function SlideEditorCard({
                   {formatPrice(property.price)}
                 </div>
               )}
-              <div className="text-gray-500 space-y-0.5 mt-2" style={{ fontSize: '12px' }}>
-                {property.area && <div>Площадь: {property.area}</div>}
-                {property.floor && <div>Этаж: {property.floor}</div>}
-                {property.finish && <div>Отделка: {property.finish}</div>}
-                {property.deliveryDate && <div>Сдача: {property.deliveryDate}</div>}
+              <div className="text-gray-700 space-y-0.5 mt-2" style={{ fontSize: '12px' }}>
+                {property.area && <div><span className="font-semibold">Площадь:</span> {property.area}</div>}
+                {property.floor && <div><span className="font-semibold">Этаж:</span> {property.floor}</div>}
+                {property.finish && <div><span className="font-semibold">Отделка:</span> {property.finish}</div>}
+                {property.deliveryDate && <div><span className="font-semibold">Сдача:</span> {property.deliveryDate}</div>}
+                {(property.extraFields ?? [])
+                  .filter(f => f.label.trim() && f.value.trim())
+                  .map((f, i) => <div key={`ef-${i}`}><span className="font-semibold">{f.label}:</span> {f.value}</div>)}
               </div>
             </div>
             {/* 2 фото вертикально */}
@@ -195,6 +310,7 @@ const SlideEditorCard = React.memo(function SlideEditorCard({
                 onChange={handleTextChange}
                 placeholder="Текст слайда..."
               />
+              {textValue.trim() && <FillIndicator capacity={capacity} />}
             </div>
             {/* 2 фото вертикально */}
             {renderPhotosColumn()}
@@ -206,12 +322,15 @@ const SlideEditorCard = React.memo(function SlideEditorCard({
           <div>
             <textarea
               ref={textareaRef}
-              className="w-full text-gray-700 border border-gray-200 rounded p-2 resize-none focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400"
+              className={`w-full text-gray-700 border rounded p-2 resize-none focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400 ${
+                capacity.fillPercent > 100 ? 'border-red-300 bg-red-50' : 'border-gray-200'
+              }`}
               style={{ fontSize: '13px', lineHeight: '1.4', minHeight: 100 }}
               value={textValue}
               onChange={handleTextChange}
               placeholder="Текст слайда..."
             />
+            {textValue.trim() && <FillIndicator capacity={capacity} />}
           </div>
         );
 
