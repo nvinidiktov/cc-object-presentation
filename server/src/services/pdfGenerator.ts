@@ -62,15 +62,116 @@ function photoDataUrl(filename: string, size: PhotoSize = 'regular'): string {
   }
 }
 
-// ─── Highlight cap ────────────────────────────────────────────────────────────
+// ─── Highlight cap (position-aware, even distribution) ───────────────────────
 
-/** Caps highlight spans in HTML to max count. Extra spans revert to plain text. */
+const HL_MIN_SPACING = 80; // min chars between two highlights (~12 words)
+
+interface HLPos {
+  idx: number;      // sequential index among all spans
+  plainPos: number; // position in plain text (tags stripped)
+  full: string;     // full match: <span class="kw">...</span>
+  inner: string;    // inner text
+}
+
+/**
+ * Caps highlight spans to `max` per slide with EVEN distribution.
+ *
+ * Algorithm:
+ * 1. Find all <span class="kw"> positions in plain-text coordinates
+ * 2. If ≤ max — enforce minimum spacing, otherwise keep all
+ * 3. If > max — divide text into `max` equal zones, pick best from each
+ * 4. Enforce minimum spacing between selected highlights
+ */
 function capHighlights(html: string, max: number): string {
-  let count = 0;
+  // Parse all highlight positions
+  const tagRegex = /<[^>]+>/g;
+  const spanRegex = /<span class="kw">(.*?)<\/span>/g;
+  const highlights: HLPos[] = [];
+
+  let m: RegExpExecArray | null;
+  while ((m = spanRegex.exec(html)) !== null) {
+    const beforeHtml = html.substring(0, m.index);
+    const plainPos = beforeHtml.replace(tagRegex, '').length;
+    highlights.push({ idx: highlights.length, plainPos, full: m[0], inner: m[1] });
+  }
+
+  if (highlights.length === 0) return html;
+
+  const plainLen = html.replace(tagRegex, '').length;
+  let selected: Set<number>;
+
+  if (highlights.length <= max) {
+    // Keep all but enforce minimum spacing
+    selected = new Set(highlights.map(h => h.idx));
+    enforceSpacing(highlights, selected, HL_MIN_SPACING);
+  } else {
+    // Select evenly spaced subset
+    selected = selectEvenlySpaced(highlights, max, plainLen, HL_MIN_SPACING);
+  }
+
+  // Rebuild: keep selected, strip tag from others
+  let finalIdx = 0;
   return html.replace(/<span class="kw">(.*?)<\/span>/g, (match, inner) => {
-    count++;
-    return count <= max ? match : inner;
+    const keep = selected.has(finalIdx);
+    finalIdx++;
+    return keep ? match : inner;
   });
+}
+
+/**
+ * Selects `max` highlights with best even distribution using zone-based approach.
+ * Divides text into `max` equal zones, picks highlight closest to each zone center.
+ */
+function selectEvenlySpaced(
+  candidates: HLPos[],
+  max: number,
+  totalLen: number,
+  minSpacing: number,
+): Set<number> {
+  const selected: HLPos[] = [];
+  const zoneSize = totalLen / max;
+
+  for (let z = 0; z < max; z++) {
+    const zoneCenter = zoneSize * z + zoneSize / 2;
+    let best: HLPos | null = null;
+    let bestDist = Infinity;
+
+    for (const c of candidates) {
+      if (selected.some(s => s.idx === c.idx)) continue;
+      // Check within reasonable range of this zone
+      const dist = Math.abs(c.plainPos - zoneCenter);
+      if (dist > zoneSize * 1.5) continue;
+      // Check min spacing with already selected
+      if (selected.some(s => Math.abs(s.plainPos - c.plainPos) < minSpacing)) continue;
+      if (dist < bestDist) { bestDist = dist; best = c; }
+    }
+
+    if (best) selected.push(best);
+  }
+
+  // Fill remaining slots if zones were sparse
+  if (selected.length < max) {
+    for (const c of candidates) {
+      if (selected.length >= max) break;
+      if (selected.some(s => s.idx === c.idx)) continue;
+      if (selected.some(s => Math.abs(s.plainPos - c.plainPos) < minSpacing)) continue;
+      selected.push(c);
+    }
+  }
+
+  return new Set(selected.map(s => s.idx));
+}
+
+/**
+ * Removes highlights that are too close to each other (keeps first, removes second).
+ */
+function enforceSpacing(all: HLPos[], kept: Set<number>, minSpacing: number): void {
+  const sorted = all.filter(h => kept.has(h.idx)).sort((a, b) => a.plainPos - b.plainPos);
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i].plainPos - sorted[i - 1].plainPos < minSpacing) {
+      kept.delete(sorted[i].idx);
+    }
+  }
 }
 
 // ─── Overflow detection & auto-shrink ────────────────────────────────────────
