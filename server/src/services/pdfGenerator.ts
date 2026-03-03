@@ -2,6 +2,7 @@ import puppeteer from 'puppeteer';
 import { Property, Photo, Slide } from 'shared';
 import { PDF, LINE_HEIGHT_MM, CHAR_WIDTH_MM, formatPrice } from 'shared';
 import { getImagePath } from './imageProcessor';
+import { highlightTexts } from './highlighter';
 import sharp from 'sharp';
 import fs from 'fs';
 import path from 'path';
@@ -206,7 +207,7 @@ function renderTitleSlide(property: Property, photos: Photo[]): string {
 
 // ─── Advantages slide ─────────────────────────────────────────────────────────
 
-function renderAdvantagesSlide(advantages: string[], photos: Photo[]): string {
+function renderAdvantagesSlide(advantages: string[], photos: Photo[], hlMap: Map<string, string>): string {
   // Многоуровневое сжатие для преимуществ
   const totalLines = advantages.length * 1.8;
   const availableHeight = PDF.CONTENT_HEIGHT_MM * 0.85;
@@ -230,7 +231,7 @@ function renderAdvantagesSlide(advantages: string[], photos: Photo[]): string {
         <div class="text-col">
           <div class="slide-heading">ПРЕИМУЩЕСТВА</div>
           <ul class="adv-list" style="font-size:${fontOverride}pt; line-height:${lhOverride}">
-            ${advantages.map(a => `<li class="adv-item">${a}</li>`).join('')}
+            ${advantages.map(a => `<li class="adv-item">${hlMap.get(a) ?? a}</li>`).join('')}
           </ul>
         </div>
         ${renderPhotosCol(photos)}
@@ -254,15 +255,18 @@ function renderPhotosCol(photos: Photo[]): string {
 
 // ─── Content slide ────────────────────────────────────────────────────────────
 
-function renderContentSlide(paragraphs: string[], photos: Photo[]): string {
-  // Многоуровневое авто-сжатие шрифта
+function renderContentSlide(paragraphs: string[], photos: Photo[], hlMap: Map<string, string>): string {
+  // Многоуровневое авто-сжатие шрифта (на оригинальном plain-тексте!)
   const fit = fitTextToSlide(paragraphs, PDF.TEXT_COLUMN_WIDTH_MM);
 
   return `
     <div class="slide">
       <div class="slide-body">
         <div class="text-col">
-          ${paragraphs.map(p => `<p class="body-p" style="font-size:${fit.fontSize}pt; line-height:${fit.lineHeight}; margin-bottom:${fit.marginBottom}">${p.replace(/\n/g, '<br/>')}</p>`).join('')}
+          ${paragraphs.map(p => {
+            const hl = hlMap.get(p) ?? p;
+            return `<p class="body-p" style="font-size:${fit.fontSize}pt; line-height:${fit.lineHeight}; margin-bottom:${fit.marginBottom}">${hl.replace(/\n/g, '<br/>')}</p>`;
+          }).join('')}
         </div>
         ${renderPhotosCol(photos)}
       </div>
@@ -277,8 +281,8 @@ function renderFullscreenSlide(photo: Photo): string {
 
 // ─── Full-text slide (без фото, шрифт чуть крупнее) ──────────────────────────
 
-function renderFullTextSlide(paragraphs: string[]): string {
-  // Многоуровневое авто-сжатие
+function renderFullTextSlide(paragraphs: string[], hlMap: Map<string, string>): string {
+  // Многоуровневое авто-сжатие (на оригинальном plain-тексте!)
   const fit = fitTextToSlide(paragraphs, PDF.CONTENT_WIDTH_MM);
   // Если текст влезает без сжатия — используем чуть больший шрифт для full-text
   const fontSize = (fit.fontSize === PDF.FONT_SIZE_BODY) ? PDF.FONT_SIZE_BODY_FULL : fit.fontSize;
@@ -287,7 +291,10 @@ function renderFullTextSlide(paragraphs: string[]): string {
     <div class="slide">
       <div class="slide-body">
         <div class="text-col text-col-full">
-          ${paragraphs.map(p => `<p class="body-p" style="font-size:${fontSize}pt; line-height:${fit.lineHeight}; margin-bottom:${fit.marginBottom}">${p.replace(/\n/g, '<br/>')}</p>`).join('')}
+          ${paragraphs.map(p => {
+            const hl = hlMap.get(p) ?? p;
+            return `<p class="body-p" style="font-size:${fontSize}pt; line-height:${fit.lineHeight}; margin-bottom:${fit.marginBottom}">${hl.replace(/\n/g, '<br/>')}</p>`;
+          }).join('')}
         </div>
       </div>
     </div>`;
@@ -415,11 +422,20 @@ const CSS = `
   .photo-grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: ${PDF.GRID_GAP_MM}mm; width: 100%; flex: 1; }
   .grid-cell { overflow: hidden; }
   .grid-cell-center { grid-column: 1 / -1; max-width: 50%; justify-self: center; }
+
+  /* ── Keyword highlight ── */
+  .kw { font-weight: 700; color: ${PDF.COLOR_RED_ACCENT}; }
 `;
 
 // ─── HTML builder ─────────────────────────────────────────────────────────────
 
-function buildHtml(property: Property, photos: Photo[], slides: Slide[]): string {
+function buildHtml(
+  property: Property,
+  photos: Photo[],
+  slides: Slide[],
+  hlParaMap: Map<string, string>,
+  hlAdvMap: Map<string, string>,
+): string {
   const photoMap = new Map(photos.map(p => [p.id, p]));
   const sp = (ids: string[]) => ids.map(id => photoMap.get(id)).filter(Boolean) as Photo[];
 
@@ -427,11 +443,11 @@ function buildHtml(property: Property, photos: Photo[], slides: Slide[]): string
     const sphotos = sp(slide.photoIds);
     switch (slide.type) {
       case 'title':      return renderTitleSlide(property, sphotos);
-      case 'advantages': return renderAdvantagesSlide(property.advantages, sphotos);
-      case 'content':    return renderContentSlide(slide.paragraphs ?? [], sphotos);
+      case 'advantages': return renderAdvantagesSlide(property.advantages, sphotos, hlAdvMap);
+      case 'content':    return renderContentSlide(slide.paragraphs ?? [], sphotos, hlParaMap);
       case 'fullscreen': return sphotos[0] ? renderFullscreenSlide(sphotos[0]) : '';
       case 'floorplan':  return sphotos[0] ? renderFullscreenSlide(sphotos[0]) : '';
-      case 'full-text':  return renderFullTextSlide(slide.paragraphs ?? []);
+      case 'full-text':  return renderFullTextSlide(slide.paragraphs ?? [], hlParaMap);
       case 'photo-grid': return renderPhotoGridSlide(sphotos);
       default: return '';
     }
@@ -491,7 +507,23 @@ export async function generatePdf(property: Property, photos: Photo[], slides: S
     }),
   ]);
 
-  const html = buildHtml(property, photos, slides);
+  // ── AI keyword highlighting ──────────────────────────────────────────────
+  const allParagraphs: string[] = [];
+  for (const slide of slides) {
+    if ((slide.type === 'content' || slide.type === 'full-text') && slide.paragraphs) {
+      allParagraphs.push(...slide.paragraphs);
+    }
+  }
+  const allAdvantages = property.advantages ?? [];
+
+  const highlighted = await highlightTexts(allParagraphs, allAdvantages);
+
+  const hlParaMap = new Map<string, string>();
+  allParagraphs.forEach((orig, i) => hlParaMap.set(orig, highlighted.paragraphs[i]));
+  const hlAdvMap = new Map<string, string>();
+  allAdvantages.forEach((orig, i) => hlAdvMap.set(orig, highlighted.advantages[i]));
+
+  const html = buildHtml(property, photos, slides, hlParaMap, hlAdvMap);
   const outPath = path.join(PDF_OUT_DIR, `${property.id}_${Date.now()}.pdf`);
 
   const browser = await puppeteer.launch({

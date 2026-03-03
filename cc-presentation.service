@@ -8,6 +8,7 @@ User=root
 WorkingDirectory=/opt/cc-presentation
 Environment=NODE_ENV=production
 Environment=PORT=3001
+Environment=OPENAI_API_KEY=
 ExecStart=/usr/bin/pnpm --filter server start
 Restart=on-failure
 RestartSec=5
