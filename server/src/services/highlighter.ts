@@ -2,42 +2,26 @@ import OpenAI from 'openai';
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 
-/** Words per chunk — every ~20 words → 2 key phrases */
-const WORDS_PER_CHUNK = 20;
-/** Max chunks per single API call — keeps each request fast */
-const BATCH_SIZE = 25;
-/** Timeout per API call in ms */
-const API_TIMEOUT = 35_000;
-
-interface ChunkRef {
-  chunk: string;
-  textIndex: number;
-}
+/** Timeout per API call */
+const API_TIMEOUT = 45_000;
+/** Max items per single API call */
+const BATCH_SIZE = 20;
+/** Max chars of text sent to AI per item (phrases picked from this prefix) */
+const MAX_TEXT_LEN = 600;
 
 /**
- * Splits text into chunks of ~N words.
- * Each chunk is an EXACT substring of the original text (no word-splitting artefacts).
+ * How many phrases to request for a paragraph based on word count.
+ * ~1 phrase per 30 words, min 1, max 3.
  */
-function splitIntoChunks(text: string, wordsPerChunk: number): string[] {
-  const wordRegex = /\S+/g;
-  const words: { start: number; end: number }[] = [];
-  let match: RegExpExecArray | null;
-  while ((match = wordRegex.exec(text)) !== null) {
-    words.push({ start: match.index, end: match.index + match[0].length });
-  }
-  if (words.length === 0) return [];
-
-  const chunks: string[] = [];
-  for (let i = 0; i < words.length; i += wordsPerChunk) {
-    const batch = words.slice(i, i + wordsPerChunk);
-    chunks.push(text.substring(batch[0].start, batch[batch.length - 1].end));
-  }
-  return chunks;
+function phrasesNeeded(text: string): number {
+  const words = text.split(/\s+/).filter(w => w.length > 0).length;
+  return Math.min(3, Math.max(1, Math.ceil(words / 30)));
 }
 
 /**
  * Applies highlight spans for given phrases to text.
- * Sorted by length desc to avoid nested spans on overlapping phrases.
+ * Sorted by length desc to prevent nested spans.
+ * Skips phrases that overlap with already-applied ones.
  */
 function applyHighlights(text: string, phrases: string[]): string {
   const unique = [...new Set(phrases.filter(p => p && p.trim().length >= 2))];
@@ -55,55 +39,86 @@ function applyHighlights(text: string, phrases: string[]): string {
   return result;
 }
 
+interface TextItem {
+  text: string;
+  n: number; // number of phrases to pick
+}
+
 /**
- * Sends one batch of chunks to OpenAI and returns phrases per chunk.
- * Returns empty arrays on error (graceful degradation).
+ * Sends a batch of text items to OpenAI.
+ * Returns array of phrase arrays, one per item.
  */
-async function processBatch(openai: OpenAI, batch: ChunkRef[]): Promise<string[][]> {
+async function processBatch(openai: OpenAI, items: TextItem[]): Promise<string[][]> {
   try {
-    const numbered = batch.map((cr, i) => `${i + 1}. «${cr.chunk}»`).join('\n');
+    const numbered = items
+      .map((item, i) => {
+        const truncated = item.text.length > MAX_TEXT_LEN
+          ? item.text.substring(0, MAX_TEXT_LEN) + '…'
+          : item.text;
+        return `${i + 1}. (${item.n}) «${truncated}»`;
+      })
+      .join('\n');
 
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
-      temperature: 0.3,
-      max_tokens: 1200,
+      temperature: 0.2,
+      max_tokens: 1500,
       response_format: { type: 'json_object' },
       messages: [
         {
           role: 'system',
-          content: 'Ты — редактор коммерческих презентаций недвижимости. Выделяешь продающие ключевые фразы.',
+          content: 'Ты — редактор продающих презентаций элитной недвижимости. Выделяешь самые яркие и убедительные продающие фразы.',
         },
         {
           role: 'user',
-          content: `Для каждого фрагмента выбери ровно 2 ключевые фразы (1-3 слова каждая), которые:
-- являются ТОЧНЫМИ подстроками фрагмента (без изменений регистра и окончаний)
-- наиболее привлекательны и убедительны для покупателя недвижимости
-- не повторяются в рамках одного фрагмента
+          content: `Для каждого текста выбери указанное в скобках количество ключевых фраз.
 
-Верни JSON: { "results": [{"phrases": ["фраза1", "фраза2"]}, ...] }
-Количество elements results = ${batch.length}.
+ПРАВИЛА ВЫБОРА ФРАЗ:
+1. Фраза = ровно 2–3 СВЯЗАННЫХ по смыслу слова (прилагательное + существительное, или наречие + прилагательное и т.п.)
+2. Фраза ОБЯЗАНА быть ТОЧНОЙ подстрокой исходного текста (без изменений регистра, окончаний)
+3. Выбирай самые ПРОДАЮЩИЕ фразы — то, что делает объект привлекательным:
+   • превосходные степени ("высококлассная отделка", "просторная гостиная")
+   • уникальные особенности ("панорамный вид", "дизайнерский ремонт")
+   • статусные характеристики ("элитный комплекс", "премиальная инфраструктура")
 
-Фрагменты:
+ЗАПРЕЩЕНО:
+- Фраза НЕ МОЖЕТ начинаться или заканчиваться предлогом/союзом/частицей (в, с, и, на, из, от, для, к, а, но, же, по, за, о, до, без, при, со)
+- НЕ выбирай общие слова ("зона кухни", "в квартире", "Полы с")
+- НЕ выбирай числа и метраж отдельно ("32 кв.м.", "4-х комнатная")
+
+Верни JSON: { "results": [{"phrases": ["фраза1", ...]}, ...] }
+Количество элементов results = ${items.length}.
+
+Тексты:
 ${numbered}`,
         },
       ],
     });
 
     const content = response.choices[0]?.message?.content;
-    if (!content) return batch.map(() => []);
+    if (!content) return items.map(() => []);
 
     const parsed = JSON.parse(content) as { results?: Array<{ phrases?: string[] }> };
     const results = parsed.results ?? [];
-    return results.map(r => (Array.isArray(r?.phrases) ? r.phrases.filter(p => typeof p === 'string' && p.length > 1) : []));
+    return results.map(r =>
+      Array.isArray(r?.phrases)
+        ? r.phrases.filter(p => typeof p === 'string' && p.trim().length >= 2)
+        : [],
+    );
   } catch (err) {
     console.warn(`Highlighting batch error: ${(err as Error).message}`);
-    return batch.map(() => []);
+    return items.map(() => []);
   }
 }
 
 /**
  * Highlights key phrases in paragraphs and advantages.
- * Strategy: chunk every ~20 words → 2 phrases per chunk, processed in parallel batches.
+ *
+ * Strategy:
+ * - Paragraphs: ceil(wordCount/30) phrases per paragraph (min 1, max 3)
+ * - Advantages: always 1 phrase per advantage
+ * - Per-slide cap (max 3) is enforced by pdfGenerator, not here
+ *
  * Falls back to original texts on any error or missing API key.
  */
 export async function highlightTexts(
@@ -120,57 +135,35 @@ export async function highlightTexts(
   }
 
   try {
-    // Build flat list of chunks, each referencing its source text index
-    const chunkRefs: ChunkRef[] = [];
-    for (let ti = 0; ti < allTexts.length; ti++) {
-      const chunks = splitIntoChunks(allTexts[ti], WORDS_PER_CHUNK);
-      for (const chunk of chunks) {
-        chunkRefs.push({ chunk, textIndex: ti });
-      }
-    }
-
-    if (chunkRefs.length === 0) {
-      return { paragraphs, advantages };
-    }
-
-    console.log(`Highlighting: ${chunkRefs.length} chunks across ${allTexts.length} texts`);
-
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY, timeout: API_TIMEOUT });
 
-    // Split into batches and process in parallel
-    const batches: ChunkRef[][] = [];
-    for (let i = 0; i < chunkRefs.length; i += BATCH_SIZE) {
-      batches.push(chunkRefs.slice(i, i + BATCH_SIZE));
-    }
+    // Build items: paragraphs get dynamic count, advantages get 1
+    const items: TextItem[] = [
+      ...paragraphs.map(p => ({ text: p, n: phrasesNeeded(p) })),
+      ...advantages.map(a => ({ text: a, n: 1 })),
+    ];
 
-    console.log(`Highlighting: ${batches.length} batches, sending in parallel...`);
+    const totalPhrases = items.reduce((s, it) => s + it.n, 0);
+    console.log(`Highlighting: ${items.length} texts (${paragraphs.length} para + ${advantages.length} adv), requesting ${totalPhrases} phrases`);
+
+    // Batch and process in parallel
+    const batches: TextItem[][] = [];
+    for (let i = 0; i < items.length; i += BATCH_SIZE) {
+      batches.push(items.slice(i, i + BATCH_SIZE));
+    }
 
     const batchResults = await Promise.all(batches.map(b => processBatch(openai, b)));
+    const allPhrases = batchResults.flat();
 
-    // Flatten: batchResults[i][j] = phrases for chunk at position (i*BATCH_SIZE + j)
-    const allPhrasesPerChunk = batchResults.flat();
-
-    // Group all collected phrases by original text index
-    const phrasesByText = new Map<number, string[]>();
-    const limit = Math.min(allPhrasesPerChunk.length, chunkRefs.length);
-    for (let i = 0; i < limit; i++) {
-      const { textIndex } = chunkRefs[i];
-      const phrases = allPhrasesPerChunk[i];
-      if (phrases.length > 0) {
-        if (!phrasesByText.has(textIndex)) phrasesByText.set(textIndex, []);
-        phrasesByText.get(textIndex)!.push(...phrases);
-      }
-    }
-
-    const totalHighlighted = Array.from(phrasesByText.values()).reduce((s, arr) => s + arr.length, 0);
-    console.log(`Highlighting: applied ${totalHighlighted} phrases across ${phrasesByText.size} texts`);
-
-    // Apply highlights to each original text
+    // Apply highlights to each text
     const highlighted = allTexts.map((text, i) => {
-      const phrases = phrasesByText.get(i);
+      const phrases = allPhrases[i];
       if (!phrases || phrases.length === 0) return text;
       return applyHighlights(text, phrases);
     });
+
+    const applied = highlighted.filter(h => h.includes('<span')).length;
+    console.log(`Highlighting: ${applied}/${allTexts.length} texts got highlights`);
 
     return {
       paragraphs: highlighted.slice(0, paragraphs.length),

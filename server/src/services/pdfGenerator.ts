@@ -62,6 +62,17 @@ function photoDataUrl(filename: string, size: PhotoSize = 'regular'): string {
   }
 }
 
+// ─── Highlight cap ────────────────────────────────────────────────────────────
+
+/** Caps highlight spans in HTML to max count. Extra spans revert to plain text. */
+function capHighlights(html: string, max: number): string {
+  let count = 0;
+  return html.replace(/<span class="kw">(.*?)<\/span>/g, (match, inner) => {
+    count++;
+    return count <= max ? match : inner;
+  });
+}
+
 // ─── Overflow detection & auto-shrink ────────────────────────────────────────
 
 interface TextFitResult {
@@ -259,14 +270,16 @@ function renderContentSlide(paragraphs: string[], photos: Photo[], hlMap: Map<st
   // Многоуровневое авто-сжатие шрифта (на оригинальном plain-тексте!)
   const fit = fitTextToSlide(paragraphs, PDF.TEXT_COLUMN_WIDTH_MM);
 
+  const textHtml = paragraphs.map(p => {
+    const hl = hlMap.get(p) ?? p;
+    return `<p class="body-p" style="font-size:${fit.fontSize}pt; line-height:${fit.lineHeight}; margin-bottom:${fit.marginBottom}">${hl.replace(/\n/g, '<br/>')}</p>`;
+  }).join('');
+
   return `
     <div class="slide">
       <div class="slide-body">
         <div class="text-col">
-          ${paragraphs.map(p => {
-            const hl = hlMap.get(p) ?? p;
-            return `<p class="body-p" style="font-size:${fit.fontSize}pt; line-height:${fit.lineHeight}; margin-bottom:${fit.marginBottom}">${hl.replace(/\n/g, '<br/>')}</p>`;
-          }).join('')}
+          ${capHighlights(textHtml, 3)}
         </div>
         ${renderPhotosCol(photos)}
       </div>
@@ -287,14 +300,16 @@ function renderFullTextSlide(paragraphs: string[], hlMap: Map<string, string>): 
   // Если текст влезает без сжатия — используем чуть больший шрифт для full-text
   const fontSize = (fit.fontSize === PDF.FONT_SIZE_BODY) ? PDF.FONT_SIZE_BODY_FULL : fit.fontSize;
 
+  const textHtml = paragraphs.map(p => {
+    const hl = hlMap.get(p) ?? p;
+    return `<p class="body-p" style="font-size:${fontSize}pt; line-height:${fit.lineHeight}; margin-bottom:${fit.marginBottom}">${hl.replace(/\n/g, '<br/>')}</p>`;
+  }).join('');
+
   return `
     <div class="slide">
       <div class="slide-body">
         <div class="text-col text-col-full">
-          ${paragraphs.map(p => {
-            const hl = hlMap.get(p) ?? p;
-            return `<p class="body-p" style="font-size:${fontSize}pt; line-height:${fit.lineHeight}; margin-bottom:${fit.marginBottom}">${hl.replace(/\n/g, '<br/>')}</p>`;
-          }).join('')}
+          ${capHighlights(textHtml, 3)}
         </div>
       </div>
     </div>`;
