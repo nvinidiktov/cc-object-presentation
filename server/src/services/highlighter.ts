@@ -30,7 +30,7 @@ export async function highlightTexts(
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       temperature: 0.3,
-      max_tokens: 500,
+      max_tokens: 1000,
       response_format: { type: 'json_object' },
       messages: [
         {
@@ -62,13 +62,13 @@ ${numberedTexts}`,
     const parsed = JSON.parse(content) as { phrases?: string[] };
     const phrases = parsed.phrases;
 
-    if (!Array.isArray(phrases) || phrases.length !== allTexts.length) {
-      console.warn(`Highlighting: неверное количество фраз (${phrases?.length} вместо ${allTexts.length})`);
+    if (!Array.isArray(phrases) || phrases.length === 0) {
+      console.warn(`Highlighting: невалидный ответ от AI`);
       return { paragraphs, advantages };
     }
 
-    // Применяем подсветку
-    const highlighted = allTexts.map((text, i) => applyHighlight(text, phrases[i]));
+    // Применяем подсветку (если AI вернул больше/меньше фраз — берём что есть)
+    const highlighted = allTexts.map((text, i) => applyHighlight(text, phrases[i] ?? ''));
 
     return {
       paragraphs: highlighted.slice(0, paragraphs.length),
