@@ -183,11 +183,15 @@ ${numbered}`,
       }
     }
 
-    return results.map(r =>
-      Array.isArray(r?.phrases)
+    // BUG FIX: map over ITEMS length, not RESULTS length.
+    // If AI returns fewer results than items, pad with empty arrays.
+    // Otherwise allPhrases gets misaligned across batches.
+    return items.map((_, i) => {
+      const r = results[i];
+      return Array.isArray(r?.phrases)
         ? r.phrases.filter(p => typeof p === 'string' && p.trim().length >= 2)
-        : [],
-    );
+        : [];
+    });
   } catch (err) {
     console.warn(`HL batch error: ${(err as Error).message}`);
     return items.map(() => []);
@@ -240,17 +244,22 @@ export async function highlightTexts(
     const batchResults = await Promise.all(batches.map(b => processBatch(openai, b)));
     const allPhrases = batchResults.flat();
 
-    // Apply chunk phrases back to their original paragraphs
-    const highlightedParagraphs = [...paragraphs];
+    // Collect ALL phrases per paragraph first (from all its chunks),
+    // then apply at once. Avoids re-searching in already-highlighted text.
+    const phrasesByParagraph = new Map<number, string[]>();
     for (let ci = 0; ci < chunks.length; ci++) {
       const { paragraphIndex } = chunks[ci];
       const phrases = allPhrases[ci];
       if (!phrases || phrases.length === 0) continue;
-      highlightedParagraphs[paragraphIndex] = applyHighlights(
-        highlightedParagraphs[paragraphIndex],
-        phrases,
-      );
+      if (!phrasesByParagraph.has(paragraphIndex)) phrasesByParagraph.set(paragraphIndex, []);
+      phrasesByParagraph.get(paragraphIndex)!.push(...phrases);
     }
+
+    const highlightedParagraphs = paragraphs.map((para, i) => {
+      const phrases = phrasesByParagraph.get(i);
+      if (!phrases || phrases.length === 0) return para;
+      return applyHighlights(para, phrases);
+    });
 
     // Apply advantage highlights
     const highlightedAdvantages = advantages.map((adv, i) => {
