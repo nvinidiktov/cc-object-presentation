@@ -60,7 +60,7 @@ router.get('/:id', (req: Request, res: Response) => {
   const row = db.getProperty(req.params.id);
   if (!row) return res.status(404).json({ error: 'Not found' });
   const userId = (req as any).userId;
-  if (row.user_id && row.user_id !== userId) return res.status(404).json({ error: 'Not found' });
+  if (!row.user_id || row.user_id !== userId) return res.status(404).json({ error: 'Not found' });
   res.json({ data: toProperty(row) });
 });
 
@@ -68,7 +68,7 @@ router.patch('/:id', (req: Request, res: Response) => {
   const existing = db.getProperty(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Not found' });
   const userId = (req as any).userId;
-  if (existing.user_id && existing.user_id !== userId) return res.status(404).json({ error: 'Not found' });
+  if (!existing.user_id || existing.user_id !== userId) return res.status(404).json({ error: 'Not found' });
   const body = req.body;
   const now = Math.floor(Date.now() / 1000);
   const updated = db.updateProperty(req.params.id, {
@@ -92,7 +92,7 @@ router.delete('/:id', (req: Request, res: Response) => {
   const row = db.getProperty(req.params.id);
   if (!row) return res.status(404).json({ error: 'Not found' });
   const userId = (req as any).userId;
-  if (row.user_id && row.user_id !== userId) return res.status(404).json({ error: 'Not found' });
+  if (!row.user_id || row.user_id !== userId) return res.status(404).json({ error: 'Not found' });
   db.deleteProperty(req.params.id);
   res.json({ data: { deleted: true } });
 });

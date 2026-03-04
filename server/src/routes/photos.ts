@@ -13,7 +13,7 @@ router.use((req: Request, res: Response, next) => {
   const prop = db.getProperty(req.params.id);
   if (!prop) return res.status(404).json({ error: 'Property not found' });
   const userId = (req as any).userId;
-  if (prop.user_id && prop.user_id !== userId) return res.status(404).json({ error: 'Not found' });
+  if (!prop.user_id || prop.user_id !== userId) return res.status(404).json({ error: 'Not found' });
   next();
 });
 
@@ -85,7 +85,8 @@ router.patch('/reorder', (req: Request, res: Response) => {
 });
 
 router.get('/file/:filename', (req: Request, res: Response) => {
-  const filePath = path.join(UPLOADS_PATH, req.params.filename);
+  const safe = path.basename(req.params.filename); // prevent path traversal
+  const filePath = path.join(UPLOADS_PATH, safe);
   res.sendFile(filePath, { headers: { 'Cache-Control': 'public, max-age=86400' } });
 });
 

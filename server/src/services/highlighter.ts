@@ -6,6 +6,7 @@ const API_TIMEOUT = 45_000;
 const BATCH_SIZE = 20;
 const MAX_TEXT_LEN = 600;
 const WORDS_PER_CHUNK = 40;
+const HL_DEBUG = !!process.env.DEBUG;
 
 // ─── Header detection ────────────────────────────────────────────────────────
 
@@ -52,6 +53,11 @@ function chunkParagraphs(paragraphs: string[]): ChunkRef[] {
       // Skip tiny trailing chunks
       if (batch.length < 8 && wi > 0) continue;
       const chunk = text.substring(batch[0].start, batch[batch.length - 1].end);
+      // Skip header-only chunks (all-caps or ending with ":")
+      if (isHeaderLine(chunk)) {
+        if (HL_DEBUG) console.log(`  HL skip header chunk: "${chunk}"`);
+        continue;
+      }
       refs.push({ chunk, paragraphIndex: pi });
     }
   }
@@ -80,7 +86,7 @@ function applyHighlights(text: string, phrases: string[]): string {
       idx = result.toLowerCase().indexOf(phrase.toLowerCase());
     }
     if (idx < 0) {
-      console.warn(`  HL miss: "${phrase}" not in "${text.substring(0, 60)}…"`);
+      if (HL_DEBUG) console.warn(`  HL miss: "${phrase}" not in "${text.substring(0, 60)}…"`);
       continue;
     }
 
@@ -179,7 +185,7 @@ ${numbered}`,
     for (let i = 0; i < results.length && i < items.length; i++) {
       const phrases = results[i]?.phrases;
       if (Array.isArray(phrases) && phrases.length > 0) {
-        console.log(`  HL chunk ${i}: [${phrases.join(' | ')}]`);
+        if (HL_DEBUG) console.log(`  HL chunk ${i}: [${phrases.join(' | ')}]`);
       }
     }
 
@@ -224,32 +230,29 @@ export async function highlightTexts(
   try {
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY, timeout: API_TIMEOUT });
 
-    // Chunk paragraphs for even spatial distribution
+    // ── Process PARAGRAPHS (chunked) ──────────────────────────────────────────
     const chunks = chunkParagraphs(paragraphs);
+    const chunkItems: TextItem[] = chunks.map(c => ({ text: c.chunk, n: 1 }));
 
-    // Build items: each chunk → 1 phrase, each advantage → 1 phrase
-    const items: TextItem[] = [
-      ...chunks.map(c => ({ text: c.chunk, n: 1 })),
-      ...advantages.map(a => ({ text: a, n: 1 })),
-    ];
+    if (HL_DEBUG) console.log(`HL: ${chunkItems.length} chunks from ${paragraphs.length} paragraphs`);
 
-    console.log(`HL: ${items.length} items (${chunks.length} chunks from ${paragraphs.length}p + ${advantages.length}a)`);
-
-    // Batch and process in parallel
-    const batches: TextItem[][] = [];
-    for (let i = 0; i < items.length; i += BATCH_SIZE) {
-      batches.push(items.slice(i, i + BATCH_SIZE));
+    // Batch chunk items and process in parallel
+    const chunkBatches: TextItem[][] = [];
+    for (let i = 0; i < chunkItems.length; i += BATCH_SIZE) {
+      chunkBatches.push(chunkItems.slice(i, i + BATCH_SIZE));
     }
 
-    const batchResults = await Promise.all(batches.map(b => processBatch(openai, b)));
-    const allPhrases = batchResults.flat();
+    const chunkBatchResults = chunkBatches.length > 0
+      ? await Promise.all(chunkBatches.map(b => processBatch(openai, b)))
+      : [];
+    const chunkPhrases = chunkBatchResults.flat();
 
     // Collect ALL phrases per paragraph first (from all its chunks),
     // then apply at once. Avoids re-searching in already-highlighted text.
     const phrasesByParagraph = new Map<number, string[]>();
     for (let ci = 0; ci < chunks.length; ci++) {
       const { paragraphIndex } = chunks[ci];
-      const phrases = allPhrases[ci];
+      const phrases = chunkPhrases[ci];
       if (!phrases || phrases.length === 0) continue;
       if (!phrasesByParagraph.has(paragraphIndex)) phrasesByParagraph.set(paragraphIndex, []);
       phrasesByParagraph.get(paragraphIndex)!.push(...phrases);
@@ -261,16 +264,31 @@ export async function highlightTexts(
       return applyHighlights(para, phrases);
     });
 
-    // Apply advantage highlights
+    // ── Process ADVANTAGES separately ───────────────────────────────────────────
+    // IMPORTANT: Advantages get their OWN dedicated API call to prevent
+    // misalignment when mixed with chunk items in the same batch.
+    //
+    // Universal scaling formula:
+    //   - 1-2 items → n=2 each (guarantees at least 2 visible highlights)
+    //   - 3+ items  → n=1 each (already gives ≥3 potential, typically ≥2 visible)
+    // This ensures "at least 2" for any realistic advantage list.
+    const nPerAdv = advantages.length <= 2 ? 2 : 1;
+    const advItems: TextItem[] = advantages.map(a => ({ text: a, n: nPerAdv }));
+    if (HL_DEBUG) console.log(`HL: ${advItems.length} advantages (n=${nPerAdv} each)`);
+
+    const advPhrases = advItems.length > 0
+      ? await processBatch(openai, advItems)
+      : [];
+
     const highlightedAdvantages = advantages.map((adv, i) => {
-      const phrases = allPhrases[chunks.length + i];
+      const phrases = advPhrases[i];
       if (!phrases || phrases.length === 0) return adv;
       return applyHighlights(adv, phrases);
     });
 
     const applied = [...highlightedParagraphs, ...highlightedAdvantages]
       .filter(h => h.includes('<span')).length;
-    console.log(`HL: ${applied}/${paragraphs.length + advantages.length} texts highlighted`);
+    console.log(`HL: ${applied}/${paragraphs.length + advantages.length} highlighted`);
 
     return {
       paragraphs: highlightedParagraphs,

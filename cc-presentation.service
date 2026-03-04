@@ -8,10 +8,13 @@ User=root
 WorkingDirectory=/opt/cc-presentation
 Environment=NODE_ENV=production
 Environment=PORT=3001
+Environment=CORS_ORIGIN=http://72.56.96.129:3001
 Environment=OPENAI_API_KEY=
 ExecStart=/usr/bin/pnpm --filter server start
 Restart=on-failure
-RestartSec=5
+RestartSec=10
+MemoryMax=2G
+CPUQuota=150%
 
 [Install]
 WantedBy=multi-user.target

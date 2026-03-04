@@ -1,4 +1,6 @@
 packages:
-  - 'shared'
-  - 'server'
-  - 'client'
+  - shared
+  - server
+  - client
+
+onlyBuiltDependencies: '["esbuild", "puppeteer", "better-sqlite3"]'

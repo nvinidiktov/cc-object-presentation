@@ -1,7 +1,12 @@
 node_modules/
 dist/
 .env
+.env.local
 *.db
+*.db-wal
+*.db-shm
 uploads/
 .DS_Store
 *.log
+.idea/
+.vscode/

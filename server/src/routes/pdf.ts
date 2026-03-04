@@ -3,17 +3,57 @@ import { db } from '../db';
 import { buildLayout } from '../services/layoutEngine';
 import { generatePdf } from '../services/pdfGenerator';
 import { Property, Photo } from 'shared';
-import path from 'path';
 import fs from 'fs';
 
 const router = Router({ mergeParams: true });
 
-// Ownership check
+// ─── PDF concurrency limiter (max 2 simultaneous) ───────────────────────────
+
+const PDF_MAX_CONCURRENT = 2;
+const PDF_QUEUE_TIMEOUT = 90_000; // 90s max wait in queue
+let pdfRunning = 0;
+const pdfQueue: Array<{ resolve: () => void; timer: ReturnType<typeof setTimeout> }> = [];
+
+function acquirePdfSlot(): Promise<void> {
+  if (pdfRunning < PDF_MAX_CONCURRENT) {
+    pdfRunning++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const idx = pdfQueue.findIndex(item => item.resolve === resolve);
+      if (idx !== -1) pdfQueue.splice(idx, 1);
+      reject(new Error('PDF queue timeout — server busy, try again later'));
+    }, PDF_QUEUE_TIMEOUT);
+    pdfQueue.push({ resolve: () => { clearTimeout(timer); pdfRunning++; resolve(); }, timer });
+  });
+}
+
+function releasePdfSlot(): void {
+  pdfRunning--;
+  const next = pdfQueue.shift();
+  if (next) next.resolve();
+}
+
+// ─── Simple per-user rate limit for PDF (1 request per 15s) ─────────────────
+
+const pdfCooldowns = new Map<string, number>();
+const PDF_COOLDOWN_MS = 15_000;
+
+function checkPdfCooldown(userId: string): boolean {
+  const last = pdfCooldowns.get(userId) ?? 0;
+  if (Date.now() - last < PDF_COOLDOWN_MS) return false;
+  pdfCooldowns.set(userId, Date.now());
+  return true;
+}
+
+// ─── Ownership check ────────────────────────────────────────────────────────
+
 router.use((req: Request, res: Response, next) => {
   const prop = db.getProperty(req.params.id);
   if (!prop) return res.status(404).json({ error: 'Not found' });
   const userId = (req as any).userId;
-  if (prop.user_id && prop.user_id !== userId) return res.status(404).json({ error: 'Not found' });
+  if (!prop.user_id || prop.user_id !== userId) return res.status(404).json({ error: 'Not found' });
   next();
 });
 
@@ -51,39 +91,40 @@ function rowToPhoto(row: any): Photo {
   };
 }
 
-// ─── GET /properties/:id/layout  (preview layout without generating PDF) ──────
+// ─── GET /properties/:id/layout ─────────────────────────────────────────────
 
 router.get('/layout', (req: Request, res: Response) => {
   const propRow = db.getProperty(req.params.id);
   if (!propRow) return res.status(404).json({ error: 'Not found' });
-
-  const photoRows = db.getPhotos(req.params.id);
-
-  const property = rowToProperty(propRow);
-  const photos = photoRows.map(rowToPhoto);
-  const layout = buildLayout(property, photos);
-
-  res.json({ data: layout });
+  const photos = db.getPhotos(req.params.id).map(rowToPhoto);
+  res.json({ data: buildLayout(rowToProperty(propRow), photos) });
 });
 
-// ─── POST /properties/:id/pdf  (generate and download PDF) ───────────────────
+// ─── POST /properties/:id/pdf ───────────────────────────────────────────────
 
 router.post('/pdf', async (req: Request, res: Response) => {
+  const userId = (req as any).userId as string;
+
+  if (!checkPdfCooldown(userId)) {
+    return res.status(429).json({ error: 'Too many requests — wait 15 seconds' });
+  }
+
+  try {
+    await acquirePdfSlot();
+  } catch {
+    return res.status(503).json({ error: 'Server busy — try again later' });
+  }
+
   try {
     const propRow = db.getProperty(req.params.id);
     if (!propRow) return res.status(404).json({ error: 'Not found' });
 
-    const photoRows = db.getPhotos(req.params.id);
-
     const property = rowToProperty(propRow);
-    const photos = photoRows.map(rowToPhoto);
+    const photos = db.getPhotos(req.params.id).map(rowToPhoto);
 
-    // Если в запросе переданы слайды с кастомным порядком — используем их
-    // Иначе генерируем авто-layout
     let slides = req.body?.slides;
     if (!slides || !Array.isArray(slides)) {
-      const layout = buildLayout(property, photos);
-      slides = layout.slides;
+      slides = buildLayout(property, photos).slides;
     }
 
     const pdfPath = await generatePdf(property, photos, slides);
@@ -94,16 +135,22 @@ router.post('/pdf', async (req: Request, res: Response) => {
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
 
     const stream = fs.createReadStream(pdfPath);
+    stream.on('error', () => {
+      if (!res.headersSent) res.status(500).json({ error: 'PDF read failed' });
+    });
     stream.pipe(res);
-    stream.on('close', () => {
-      // Удаляем временный PDF после отправки
+    res.on('finish', () => {
       setTimeout(() => {
-        if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
-      }, 5000);
+        try { if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath); } catch {}
+      }, 10_000);
     });
   } catch (err: any) {
     console.error('PDF generation error:', err);
-    res.status(500).json({ error: err.message ?? 'Ошибка генерации PDF' });
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message ?? 'PDF generation failed' });
+    }
+  } finally {
+    releasePdfSlot();
   }
 });
 
