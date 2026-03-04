@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { propertiesApi, photosApi, pdfApi } from '../lib/api';
@@ -11,7 +11,32 @@ import {
   Layers,
   PencilLine,
   AlertTriangle,
+  X,
 } from 'lucide-react';
+
+/** Extract and translate server error to Russian */
+async function parseError(err: any): Promise<string> {
+  let serverMsg = '';
+  if (err.response?.data) {
+    if (err.response.data instanceof Blob) {
+      try {
+        const text = await err.response.data.text();
+        serverMsg = JSON.parse(text).error || '';
+      } catch {}
+    } else if (typeof err.response.data === 'object') {
+      serverMsg = err.response.data.error || '';
+    }
+  }
+
+  const status = err.response?.status;
+  if (status === 429 || serverMsg.includes('Too many'))
+    return 'Подождите 15 секунд перед следующей генерацией PDF';
+  if (status === 503 || serverMsg.includes('busy') || serverMsg.includes('queue'))
+    return 'Сервер занят. Попробуйте через 30 секунд';
+  if (serverMsg.includes('read failed'))
+    return 'Ошибка чтения PDF. Попробуйте ещё раз';
+  return 'Не удалось выполнить операцию. Попробуйте ещё раз';
+}
 
 type Tab = 'data' | 'editor';
 
@@ -24,6 +49,14 @@ export default function PropertyEdit() {
   const [slides, setSlides] = useState<Slide[] | null>(null);
   const [slidesEdited, setSlidesEdited] = useState(false);
   const [layoutWarnings, setLayoutWarnings] = useState<string[]>([]);
+  const [notification, setNotification] = useState<{ type: 'error' | 'info'; message: string } | null>(null);
+
+  // Auto-dismiss notification after 6s
+  useEffect(() => {
+    if (!notification) return;
+    const timer = setTimeout(() => setNotification(null), 6000);
+    return () => clearTimeout(timer);
+  }, [notification]);
 
   // ─── Queries ────────────────────────────────────────────────────────────────
   const { data: property, isLoading: propLoading } = useQuery({
@@ -60,7 +93,8 @@ export default function PropertyEdit() {
       setSlidesEdited(false);
       setActiveTab('editor');
     } catch (err: any) {
-      alert('Ошибка: ' + err.message);
+      const msg = await parseError(err);
+      setNotification({ type: 'error', message: msg });
     } finally {
       setLayoutLoading(false);
     }
@@ -74,7 +108,8 @@ export default function PropertyEdit() {
       const name = `${property?.name || 'Презентация'}.pdf`;
       downloadBlob(blob, name);
     } catch (err: any) {
-      alert('Ошибка генерации PDF: ' + err.message);
+      const msg = await parseError(err);
+      setNotification({ type: 'error', message: msg });
     } finally {
       setPdfLoading(false);
     }
@@ -158,6 +193,30 @@ export default function PropertyEdit() {
 
         {/* Actions moved to SlideEditor */}
       </div>
+
+      {/* Notification toast */}
+      {notification && (
+        <div className={`mb-4 p-3 rounded-md flex items-start gap-2 ${
+          notification.type === 'error'
+            ? 'bg-red-50 border border-red-200'
+            : 'bg-blue-50 border border-blue-200'
+        }`}>
+          <AlertTriangle className={`w-4 h-4 flex-shrink-0 mt-0.5 ${
+            notification.type === 'error' ? 'text-red-500' : 'text-blue-500'
+          }`} />
+          <p className={`text-sm flex-1 ${
+            notification.type === 'error' ? 'text-red-700' : 'text-blue-700'
+          }`}>
+            {notification.message}
+          </p>
+          <button
+            onClick={() => setNotification(null)}
+            className="text-gray-400 hover:text-gray-600 flex-shrink-0"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Warnings */}
       {layoutWarnings.length > 0 && (

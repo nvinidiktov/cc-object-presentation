@@ -14,17 +14,17 @@ import path from 'path';
 // Fullscreen/floorplan: (297-10)×(210-10)mm = 287×200mm → 1085×756px @ 96DPI
 const IMG_FULLSCREEN_W = 1090;
 const IMG_FULLSCREEN_H = 760;
-const IMG_FULLSCREEN_Q = 50;
+const IMG_FULLSCREEN_Q = 60;
 
 // Content/advantages/title/grid(3-4): 139×96.5mm → 525×365px @ 96DPI
 const IMG_REGULAR_W = 530;
 const IMG_REGULAR_H = 370;
-const IMG_REGULAR_Q = 50;
+const IMG_REGULAR_Q = 60;
 
 // Grid (2 фото, одна строка на всю высоту): 139×198mm → 530×750px @ 96DPI
 const IMG_GRID_TALL_W = 530;
 const IMG_GRID_TALL_H = 750;
-const IMG_GRID_TALL_Q = 50;
+const IMG_GRID_TALL_Q = 60;
 
 // Cache of optimized data URLs per size category
 let optimizedFullscreen: Map<string, string> = new Map();
@@ -337,13 +337,20 @@ function renderAdvantagesSlide(advantages: string[], photos: Photo[], hlMap: Map
     }
   }
 
+  // Build list items with AI highlights, then cap evenly:
+  // formula: max(2, ceil(count / 2))
+  //   3 items → 2, 4 → 2, 5 → 3, 6 → 3, 7 → 4, 8 → 4
+  const advItemsHtml = advantages.map(a => `<li class="adv-item">${hlMap.get(a) ?? a}</li>`).join('');
+  const hlCap = Math.max(2, Math.ceil(advantages.length / 2));
+  const cappedAdvItemsHtml = capHighlights(advItemsHtml, hlCap);
+
   return `
     <div class="slide">
       <div class="slide-body">
         <div class="text-col">
           <div class="slide-heading">ПРЕИМУЩЕСТВА</div>
           <ul class="adv-list" style="font-size:${fontOverride}pt; line-height:${lhOverride}">
-            ${advantages.map(a => `<li class="adv-item">${hlMap.get(a) ?? a}</li>`).join('')}
+            ${cappedAdvItemsHtml}
           </ul>
         </div>
         ${renderPhotosCol(photos)}

@@ -212,7 +212,7 @@ export default function SlideEditor({
             className="btn-secondary text-xs"
           >
             <RefreshCw className={`w-4 h-4 ${layoutLoading ? 'animate-spin' : ''}`} />
-            Обновить слайды
+            Пересоздать слайды
           </button>
           <button
             onClick={onExportPdf}
