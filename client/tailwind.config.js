@@ -7,6 +7,8 @@ export default {
         brand: {
           red: '#CC0000',
           'red-dark': '#8B1515',
+          navy: '#121f2b',
+          'navy-light': '#1e3044',
         },
       },
       fontFamily: {

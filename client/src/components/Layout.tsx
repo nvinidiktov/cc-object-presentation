@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { Building2, Plus, LogOut } from 'lucide-react';
+import { Plus, LogOut } from 'lucide-react';
 import { useAuthStore } from '../stores/authStore';
 
 export default function Layout() {
@@ -11,11 +11,11 @@ export default function Layout() {
   return (
     <div className="min-h-screen flex flex-col">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
+      <header className="bg-brand-navy sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-2 font-semibold text-gray-900">
-            <Building2 className="w-5 h-5 text-red-600" />
-            <span>CC Презентации</span>
+          <Link to="/" className="flex items-center gap-3">
+            <img src="/logo.svg" alt="Венедиктов и Партнёры" className="h-7" />
+            <span className="text-white/50 text-sm hidden sm:inline">Сервис презентаций</span>
           </Link>
           <div className="flex items-center gap-3">
             {!isNew && (
@@ -24,8 +24,8 @@ export default function Layout() {
                 Новый объект
               </Link>
             )}
-            <span className="text-sm text-gray-500">@{userId}</span>
-            <button onClick={logout} className="text-gray-400 hover:text-gray-600 transition-colors" title="Выйти">
+            <span className="text-sm text-white/60">@{userId}</span>
+            <button onClick={logout} className="text-white/40 hover:text-white/70 transition-colors" title="Выйти">
               <LogOut className="w-4 h-4" />
             </button>
           </div>
