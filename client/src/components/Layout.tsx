@@ -14,7 +14,7 @@ export default function Layout() {
       <header className="bg-brand-navy sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-3">
-            <img src="/logo.svg" alt="Венедиктов и Партнёры" className="h-7" />
+            <img src="/logo.svg" alt="Винидиктов и Партнёры" className="h-7" />
             <span className="text-white/50 text-sm hidden sm:inline">Сервис презентаций</span>
           </Link>
           <div className="flex items-center gap-3">
