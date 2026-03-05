@@ -78,9 +78,9 @@ export function buildLayout(
 ): LayoutResult {
   const warnings: string[] = [];
 
-  // Разбиваем описание на абзацы (разделитель — пустая строка)
+  // Разбиваем описание на абзацы (любой перенос строки = новый абзац)
   const rawParagraphs = property.description
-    .split(/\n\s*\n/)
+    .split(/\n/)
     .map(p => p.trim())
     .filter(p => p.length > 0);
 
