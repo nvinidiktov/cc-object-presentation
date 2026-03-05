@@ -375,8 +375,28 @@ export default function PropertyForm({
         </p>
       </section>
 
-      {/* Описание редактируется во вкладке «Редактор слайдов» */}
-      <input type="hidden" {...register('description')} />
+      {/* ─── Описание объекта ─────────────────────────────────────────────────── */}
+      <section className="card p-6 space-y-4">
+        <h2 className="font-semibold text-gray-900 text-base border-b border-gray-100 pb-3">
+          Описание объекта
+          <span className="ml-2 text-xs font-normal text-gray-400">
+            (текст по слайдам — разбивка обновляется в реальном времени)
+          </span>
+        </h2>
+
+        <p className="text-xs text-gray-400 mb-2">
+          Разделяйте абзацы пустой строкой.
+          Вставка из Google Docs / Word — форматирование сохранится.
+          Разбивку по слайдам увидите во вкладке «Редактор слайдов».
+        </p>
+        <textarea
+          {...register('description')}
+          className="input resize-none font-mono text-sm"
+          rows={12}
+          placeholder="Опишите объект. Каждый абзац, разделённый пустой строкой, будет распределён по слайдам."
+          onPaste={e => handlePaste(e, 'description')}
+        />
+      </section>
 
       {/* ─── Кнопка сабмит (только в режиме создания) ─────────────────────── */}
       {!autoSave && (
