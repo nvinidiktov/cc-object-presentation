@@ -30,6 +30,46 @@ function estimateHeightMm(paragraphs: string[], charsPerLine: number): number {
   return totalLines * LINE_HEIGHT_MM;
 }
 
+// ─── Auto-split oversized paragraphs by sentence boundaries ─────────────────
+
+/**
+ * Если абзац не помещается на один слайд — разрезает его по границам предложений.
+ * Каждый кусок гарантированно заканчивается полным предложением.
+ */
+function splitOversizedParagraphs(
+  paragraphs: string[],
+  charsPerLine: number,
+  maxHeightMm: number
+): string[] {
+  const result: string[] = [];
+  for (const para of paragraphs) {
+    if (estimateHeightMm([para], charsPerLine) <= maxHeightMm) {
+      result.push(para);
+      continue;
+    }
+    // Разрезаем на предложения: текст до .!? включительно + пробелы после
+    const sentences = para.match(/[^.!?]*[.!?]+[\s]*/g);
+    if (!sentences) {
+      // Нет знаков препинания — пушим как есть (жадный алгоритм выдаст warning)
+      result.push(para);
+      continue;
+    }
+    // Жадная упаковка предложений в куски, влезающие на слайд
+    let chunk = '';
+    for (const sent of sentences) {
+      const candidate = chunk + sent;
+      if (chunk && estimateHeightMm([candidate], charsPerLine) > maxHeightMm) {
+        result.push(chunk.trim());
+        chunk = sent;
+      } else {
+        chunk = candidate;
+      }
+    }
+    if (chunk.trim()) result.push(chunk.trim());
+  }
+  return result;
+}
+
 // ─── Main layout engine ──────────────────────────────────────────────────────
 
 export function buildLayout(
@@ -39,10 +79,18 @@ export function buildLayout(
   const warnings: string[] = [];
 
   // Разбиваем описание на абзацы (разделитель — пустая строка)
-  const allParagraphs = property.description
+  const rawParagraphs = property.description
     .split(/\n\s*\n/)
     .map(p => p.trim())
     .filter(p => p.length > 0);
+
+  // Авто-разбивка слишком длинных абзацев по предложениям
+  const contentTextHeightMm = PDF.CONTENT_HEIGHT_MM * 0.75;
+  const allParagraphs = splitOversizedParagraphs(
+    rawParagraphs,
+    CHARS_PER_LINE_CONTENT,
+    contentTextHeightMm
+  );
 
   // Делим фото по типам
   const regularPhotos = photos
@@ -85,7 +133,6 @@ export function buildLayout(
   }
 
   // ─── Слайды с контентом: жадный алгоритм ─────────────────────────────────
-  const contentTextHeightMm = PDF.CONTENT_HEIGHT_MM * 0.75;
   let paraIndex = 0;
 
   while (paraIndex < allParagraphs.length || regularPhotoIndex < regularPhotos.length) {
