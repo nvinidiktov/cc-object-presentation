@@ -197,12 +197,23 @@ function estimateTextHeightWithParams(
   const cpl = Math.floor(colWidthMm / adjustedCharWidth);
   const lineHeightMm = fontSize * 0.353 * lineHeight;
   let totalHeight = 0;
-  for (const para of paragraphs) {
+  for (let i = 0; i < paragraphs.length; i++) {
+    const para = paragraphs[i];
     let paraLines = 0;
     for (const line of para.split('\n')) {
       paraLines += Math.max(1, Math.ceil(line.length / cpl));
     }
-    totalHeight += paraLines * lineHeightMm + marginMm;
+    // Контекстный отступ
+    const curBullet = isBulletLine(para);
+    const nextBullet = paragraphs[i + 1] ? isBulletLine(paragraphs[i + 1]) : false;
+    const curBulletHdr = isBulletHeader(para);
+    const curSection = isSectionHeading(para);
+    let mb = marginMm;
+    if (!paragraphs[i + 1]) mb = 0;
+    else if (curSection) mb = 2;
+    else if (curBulletHdr && nextBullet) mb = 0;
+    else if (curBullet && nextBullet) mb = 0;
+    totalHeight += paraLines * lineHeightMm + mb;
   }
   return totalHeight;
 }
@@ -251,12 +262,15 @@ function estimateTextHeight(paragraphs: string[], colWidthMm: number): number {
 /**
  * Подбирает размер шрифта для названия, чтобы оно помещалось в одну строку.
  * Уменьшает от 36pt до минимум 22pt.
+ * Для CAPS-текста добавляем 15% ширины (заглавные буквы шире строчных).
  */
 function fitTitleName(name: string, maxWidthMm: number): number {
   const maxFontSize = PDF.FONT_SIZE_NAME; // 36pt
   const minFontSize = 22;
+  const isUpperCase = name === name.toUpperCase();
+  const widthFactor = isUpperCase ? 1.15 : 1.0; // CAPS шире
   for (let fs = maxFontSize; fs >= minFontSize; fs -= 2) {
-    const charW = CHAR_WIDTH_MM * (fs / PDF.FONT_SIZE_BODY);
+    const charW = CHAR_WIDTH_MM * (fs / PDF.FONT_SIZE_BODY) * widthFactor;
     const charsPerLine = Math.floor(maxWidthMm / charW);
     if (name.length <= charsPerLine) return fs;
   }
@@ -290,7 +304,7 @@ function renderTitleSlide(property: Property, photos: Photo[]): string {
         <!-- LEFT col: name / address / metro / price / table -->
         <div class="title-left">
           <div class="title-name" style="font-size:${titleFontSize}pt">${titleName}</div>
-          ${property.address ? `<div class="title-sub">${property.address}</div>` : ''}
+          ${property.address ? `<div class="title-sub" style="font-weight:bold">${property.address}</div>` : ''}
           ${property.metro   ? `<div class="title-sub">${property.metro}</div>` : ''}
           ${priceFormatted ? `<div class="price-badge">${priceFormatted}</div>` : ''}
           ${tableRows.length > 0 ? `
@@ -370,18 +384,77 @@ function renderPhotosCol(photos: Photo[]): string {
   </div>`;
 }
 
+// ─── Paragraph type helpers ──────────────────────────────────────────────────
+
+const BULLET_RE = /^[\u2022\u2013\u2014\-–—]\s/;
+const HEADER_COLON_RE = /:\s*$/;
+
+/** Буллет: строка начинается с маркера (•, –, -, —) */
+function isBulletLine(text: string): boolean {
+  return BULLET_RE.test(text);
+}
+
+/** Заголовок-секция: ВСЕ заглавные буквы (>= 3 букв) — вроде «ОПИСАНИЕ ОБЪЕКТА» */
+function isSectionHeading(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  const letters = trimmed.replace(/[^a-zA-Zа-яА-ЯёЁ]/g, '');
+  return letters.length >= 3 && letters === letters.toUpperCase() && letters !== letters.toLowerCase();
+}
+
+/** Заголовок перед буллетами: строка заканчивается на ":" */
+function isBulletHeader(text: string): boolean {
+  return HEADER_COLON_RE.test(text.trim());
+}
+
+/**
+ * Умный расчёт отступа после абзаца на основе контекста:
+ * - Буллет → следующий буллет: 0mm (плотный список)
+ * - Буллет → обычный текст: полный отступ (пустая строка)
+ * - Заголовок с ":" → буллет/текст: 0mm (заголовок списка)
+ * - Секционный заголовок (CAPS): 0mm → он всегда начинает слайд
+ * - Обычный текст → что угодно: полный отступ
+ */
+function computeMarginBottom(current: string, next: string | undefined, defaultMargin: string): string {
+  if (!next) return '0mm';  // последний — нет отступа
+
+  const curBullet = isBulletLine(current);
+  const nextBullet = isBulletLine(next);
+  const curBulletHeader = isBulletHeader(current);
+  const curSection = isSectionHeading(current);
+
+  // Секционный CAPS-заголовок → 2mm к следующему
+  if (curSection) return '2mm';
+
+  // Заголовок списка ("Планировка:") перед буллетами → 0mm
+  if (curBulletHeader && nextBullet) return '0mm';
+
+  // Буллет → буллет: 0mm (плотный список)
+  if (curBullet && nextBullet) return '0mm';
+
+  // Буллет → обычный текст: полный отступ (пустая строка)
+  if (curBullet && !nextBullet) return defaultMargin;
+
+  // Заголовок с ":" но не перед буллетом → маленький отступ
+  if (curBulletHeader) return '2mm';
+
+  // Обычный текст → буллет: полный отступ
+  // Обычный текст → обычный текст: полный отступ
+  return defaultMargin;
+}
+
 // ─── Content slide ────────────────────────────────────────────────────────────
 
 function renderContentSlide(paragraphs: string[], photos: Photo[], hlMap: Map<string, string>): string {
   // Многоуровневое авто-сжатие шрифта (на оригинальном plain-тексте!)
   const fit = fitTextToSlide(paragraphs, PDF.TEXT_COLUMN_WIDTH_MM);
 
-  const textHtml = paragraphs.map(p => {
+  const textHtml = paragraphs.map((p, i) => {
     const hl = hlMap.get(p) ?? p;
-    // Буллеты (• – -) — маленький отступ, обычные абзацы — полный
-    const isBullet = /^[\u2022\u2013\u2014\-–—]\s/.test(p);
-    const mb = isBullet ? '2mm' : fit.marginBottom;
-    return `<p class="body-p" style="font-size:${fit.fontSize}pt; line-height:${fit.lineHeight}; margin-bottom:${mb}">${hl.replace(/\n/g, '<br/>')}</p>`;
+    const mb = computeMarginBottom(p, paragraphs[i + 1], fit.marginBottom);
+    const isSectionHeader = isSectionHeading(p);
+    const fontWeight = isSectionHeader ? '; font-weight:bold' : '';
+    return `<p class="body-p" style="font-size:${fit.fontSize}pt; line-height:${fit.lineHeight}; margin-bottom:${mb}${fontWeight}">${hl.replace(/\n/g, '<br/>')}</p>`;
   }).join('');
 
   return `
@@ -409,11 +482,12 @@ function renderFullTextSlide(paragraphs: string[], hlMap: Map<string, string>): 
   // Если текст влезает без сжатия — используем чуть больший шрифт для full-text
   const fontSize = (fit.fontSize === PDF.FONT_SIZE_BODY) ? PDF.FONT_SIZE_BODY_FULL : fit.fontSize;
 
-  const textHtml = paragraphs.map(p => {
+  const textHtml = paragraphs.map((p, i) => {
     const hl = hlMap.get(p) ?? p;
-    const isBullet = /^[\u2022\u2013\u2014\-–—]\s/.test(p);
-    const mb = isBullet ? '2mm' : fit.marginBottom;
-    return `<p class="body-p" style="font-size:${fontSize}pt; line-height:${fit.lineHeight}; margin-bottom:${mb}">${hl.replace(/\n/g, '<br/>')}</p>`;
+    const mb = computeMarginBottom(p, paragraphs[i + 1], fit.marginBottom);
+    const isSectionHeader = isSectionHeading(p);
+    const fontWeight = isSectionHeader ? '; font-weight:bold' : '';
+    return `<p class="body-p" style="font-size:${fontSize}pt; line-height:${fit.lineHeight}; margin-bottom:${mb}${fontWeight}">${hl.replace(/\n/g, '<br/>')}</p>`;
   }).join('');
 
   return `

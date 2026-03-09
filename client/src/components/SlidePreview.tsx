@@ -23,9 +23,7 @@ function fitTextToSlide(
   const tiers: TextFitResult[] = [
     { fontSize: 20, lineHeight: 1.2,  marginBottom: 8 },      // Tier 1: стандарт (пустая строка)
     { fontSize: 19, lineHeight: 1.15, marginBottom: 7 },      // Tier 2: чуть меньше
-    { fontSize: 18, lineHeight: 1.1,  marginBottom: 6 },      // Tier 3: компактнее
-    { fontSize: 17, lineHeight: 1.05, marginBottom: 5 },      // Tier 4: ещё компактнее
-    { fontSize: 16, lineHeight: 1.0,  marginBottom: 4 },      // Tier 5: крайний случай
+    { fontSize: 18, lineHeight: 1.1,  marginBottom: 6 },      // Tier 3: минимум → дальше перенос
   ];
 
   for (const tier of tiers) {
@@ -33,12 +31,20 @@ function fitTextToSlide(
     const cpl = Math.floor(colWidthMm / adjustedCharWidth);
     const lineHeightMm = tier.fontSize * 0.353 * tier.lineHeight;
     let totalHeight = 0;
-    for (const para of paragraphs) {
+    for (let i = 0; i < paragraphs.length; i++) {
+      const para = paragraphs[i];
       let paraLines = 0;
       for (const line of para.split('\n')) {
         paraLines += Math.max(1, Math.ceil(line.length / cpl));
       }
-      totalHeight += paraLines * lineHeightMm + tier.marginBottom;
+      // Контекстные отступы
+      const nextP = paragraphs[i + 1];
+      let mb = tier.marginBottom;
+      if (!nextP) mb = 0;
+      else if (isSectionHeading(para)) mb = 2;
+      else if (isBulletHeader(para) && isBulletLine(nextP)) mb = 0;
+      else if (isBulletLine(para) && isBulletLine(nextP)) mb = 0;
+      totalHeight += paraLines * lineHeightMm + mb;
     }
     if (totalHeight <= contentHeightMm * 0.88) {
       return tier;
@@ -73,6 +79,35 @@ const S = {
 
 import React from 'react';
 
+// ─── Paragraph type helpers (mirror server logic) ────────────────────────────
+
+const BULLET_RE = /^[\u2022\u2013\u2014\-–—]\s/;
+const HEADER_COLON_RE = /:\s*$/;
+
+function isBulletLine(text: string): boolean { return BULLET_RE.test(text); }
+function isSectionHeading(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  const letters = trimmed.replace(/[^a-zA-Zа-яА-ЯёЁ]/g, '');
+  return letters.length >= 3 && letters === letters.toUpperCase() && letters !== letters.toLowerCase();
+}
+function isBulletHeader(text: string): boolean { return HEADER_COLON_RE.test(text.trim()); }
+
+/** Умный отступ между абзацами с учётом контекста */
+function computeMarginMm(current: string, next: string | undefined, defaultMb: number): number {
+  if (!next) return 0;
+  const curBullet = isBulletLine(current);
+  const nextBullet = isBulletLine(next);
+  const curBulletHdr = isBulletHeader(current);
+  const curSection = isSectionHeading(current);
+  if (curSection) return 2;
+  if (curBulletHdr && nextBullet) return 0;
+  if (curBullet && nextBullet) return 0;
+  if (curBullet && !nextBullet) return defaultMb;
+  if (curBulletHdr) return 2;
+  return defaultMb;
+}
+
 function PhotosColumn({ photos }: { photos: Photo[] }) {
   // Если только 1 фото — одно крупное по центру
   if (photos.length === 1 && photos[0]) {
@@ -100,8 +135,10 @@ function PhotosColumn({ photos }: { photos: Photo[] }) {
 function fitTitleName(name: string, maxWidthMm: number): number {
   const maxFontSize = PDF.FONT_SIZE_NAME; // 36pt
   const minFontSize = 22;
+  const isUpperCase = name === name.toUpperCase();
+  const widthFactor = isUpperCase ? 1.15 : 1.0;
   for (let fs = maxFontSize; fs >= minFontSize; fs -= 2) {
-    const charW = CHAR_WIDTH_MM * (fs / PDF.FONT_SIZE_BODY);
+    const charW = CHAR_WIDTH_MM * (fs / PDF.FONT_SIZE_BODY) * widthFactor;
     const charsPerLine = Math.floor(maxWidthMm / charW);
     if (name.length <= charsPerLine) return fs;
   }
@@ -133,10 +170,10 @@ function TitleSlide({ property, photos }: { property: Property; photos: Photo[] 
             {titleName}
           </div>
           {property.address && (
-            <div style={{ fontSize: pt(PDF.FONT_SIZE_SUB), color: PDF.COLOR_TEXT, lineHeight: 1.4, marginBottom: px(1.5) }}>{property.address}</div>
+            <div style={{ fontSize: pt(PDF.FONT_SIZE_SUB), color: PDF.COLOR_TEXT, lineHeight: 1.2, marginBottom: px(1.5), fontWeight: 'bold' }}>{property.address}</div>
           )}
           {property.metro && (
-            <div style={{ fontSize: pt(PDF.FONT_SIZE_SUB), color: PDF.COLOR_TEXT, lineHeight: 1.4, marginBottom: px(1.5) }}>{property.metro}</div>
+            <div style={{ fontSize: pt(PDF.FONT_SIZE_SUB), color: PDF.COLOR_TEXT, lineHeight: 1.2, marginBottom: px(1.5) }}>{property.metro}</div>
           )}
           {priceFormatted && (
             <div style={{
@@ -224,9 +261,13 @@ function ContentSlide({ paragraphs, photos }: { paragraphs: string[]; photos: Ph
     <div style={S.slide}>
       <div style={S.body}>
         <div style={S.textCol}>
-          {paragraphs.map((p, i) => (
-            <p key={i} style={{ fontSize: pt(fit.fontSize), margin: 0, marginBottom: i < paragraphs.length - 1 ? px(fit.marginBottom) : 0, lineHeight: fit.lineHeight, textAlign: 'left', whiteSpace: 'pre-wrap' }}>{p}</p>
-          ))}
+          {paragraphs.map((p, i) => {
+            const mb = computeMarginMm(p, paragraphs[i + 1], fit.marginBottom);
+            const isHeader = isSectionHeading(p);
+            return (
+              <p key={i} style={{ fontSize: pt(fit.fontSize), margin: 0, marginBottom: px(mb), lineHeight: fit.lineHeight, textAlign: 'left', whiteSpace: 'pre-wrap', fontWeight: isHeader ? 'bold' : undefined }}>{p}</p>
+            );
+          })}
         </div>
         <PhotosColumn photos={photos} />
       </div>
@@ -254,9 +295,13 @@ function FullTextSlide({ paragraphs }: { paragraphs: string[] }) {
   return (
     <div style={S.slide}>
       <div style={S.textColFull}>
-        {paragraphs.map((p, i) => (
-          <p key={i} style={{ fontSize: pt(fontSize), margin: 0, marginBottom: i < paragraphs.length - 1 ? px(fit.marginBottom) : 0, lineHeight: fit.lineHeight, textAlign: 'left', whiteSpace: 'pre-wrap' }}>{p}</p>
-        ))}
+        {paragraphs.map((p, i) => {
+          const mb = computeMarginMm(p, paragraphs[i + 1], fit.marginBottom);
+          const isHeader = isSectionHeading(p);
+          return (
+            <p key={i} style={{ fontSize: pt(fontSize), margin: 0, marginBottom: px(mb), lineHeight: fit.lineHeight, textAlign: 'left', whiteSpace: 'pre-wrap', fontWeight: isHeader ? 'bold' : undefined }}>{p}</p>
+          );
+        })}
       </div>
     </div>
   );

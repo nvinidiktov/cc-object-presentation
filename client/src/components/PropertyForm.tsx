@@ -2,7 +2,7 @@ import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { PropertyCreate } from 'shared';
-import { Plus, X, Check, Loader2 } from 'lucide-react';
+import { Plus, X, Check, Loader2, AlertTriangle } from 'lucide-react';
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 
 // ─── Validation schema ────────────────────────────────────────────────────────
@@ -135,6 +135,21 @@ export default function PropertyForm({
     control,
     name: 'extraFields',
   });
+
+  // ─── Лимит полей таблицы: 10 строк макс (стандартные + дополнительные) ──────
+  const MAX_TABLE_ROWS = 10;
+  const watchedArea = watch('area');
+  const watchedFloor = watch('floor');
+  const watchedFinish = watch('finish');
+  const watchedDelivery = watch('deliveryDate');
+  const watchedExtra = watch('extraFields');
+
+  const filledStandardCount = [watchedArea, watchedFloor, watchedFinish, watchedDelivery]
+    .filter(v => v?.trim()).length;
+  const filledExtraCount = (watchedExtra ?? [])
+    .filter((f: any) => f?.label?.trim() && f?.value?.trim()).length;
+  const totalTableRows = filledStandardCount + filledExtraCount;
+  const isOverLimit = totalTableRows > MAX_TABLE_ROWS;
 
   // ─── Auto-save с debounce 1.5 секунды ─────────────────────────────────────
 
@@ -309,7 +324,8 @@ export default function PropertyForm({
             <div>
               <p className="text-sm font-medium text-gray-700">Дополнительные поля</p>
               <p className="text-xs text-gray-400 mt-0.5">
-                Незаполненные поля на слайде не появятся
+                Незаполненные поля на слайде не появятся.
+                Примеры: Высота потолков, Паркинг, Терраса, Балкон, Виды, Архитектор, Дополнительно
               </p>
             </div>
             <button
@@ -325,6 +341,17 @@ export default function PropertyForm({
             <p className="text-xs text-gray-400 italic">
               Например: Застройщик, Класс жилья, Высота потолков, Паркинг...
             </p>
+          )}
+
+          {isOverLimit && (
+            <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3">
+              <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-700">
+                На титульном слайде помещается максимум {MAX_TABLE_ROWS} строк таблицы.
+                Сейчас заполнено {totalTableRows} — лишние поля не влезут в PDF.
+                Уберите {totalTableRows - MAX_TABLE_ROWS} поле(й) или оставьте незаполненными.
+              </p>
+            </div>
           )}
 
           <div className="space-y-2">

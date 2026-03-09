@@ -6,19 +6,58 @@ import { v4 as uuid } from 'uuid';
 
 // ─── Paragraph fitting ───────────────────────────────────────────────────────
 
+const BULLET_RE = /^[\u2022\u2013\u2014\-–—]\s/;
+const HEADER_COLON_RE = /:\s*$/;
+
+/** Буллет: строка начинается с маркера (•, –, -, —) */
+function isBulletLine(text: string): boolean {
+  return BULLET_RE.test(text);
+}
+
+/** Заголовок-секция: ВСЕ заглавные буквы (>= 3 букв) — вроде «ОПИСАНИЕ ОБЪЕКТА» */
+function isSectionHeading(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  const letters = trimmed.replace(/[^a-zA-Zа-яА-ЯёЁ]/g, '');
+  return letters.length >= 3 && letters === letters.toUpperCase() && letters !== letters.toLowerCase();
+}
+
+/** Заголовок перед буллетами: строка заканчивается на ":" */
+function isBulletHeader(text: string): boolean {
+  return HEADER_COLON_RE.test(text.trim());
+}
+
 /**
- * Оценивает количество строк, которые займёт абзац в колонке заданной ширины
+ * Оценивает количество строк, которые займёт абзац в колонке заданной ширины.
+ * Учитывает контекст: буллеты и заголовки с ":" получают маленький отступ.
  */
-function estimateParagraphLines(paragraph: string, charsPerLine: number): number {
+function estimateParagraphLines(paragraph: string, charsPerLine: number, nextParagraph?: string): number {
   if (!paragraph.trim()) return PARAGRAPH_MARGIN_LINES;
   const hardLines = paragraph.split('\n');
   let totalLines = 0;
   for (const line of hardLines) {
     totalLines += Math.max(1, Math.ceil(line.length / charsPerLine));
   }
-  // Буллеты (•, –, -) получают маленький отступ ≈ 2mm вместо 8mm
-  const isBullet = /^[\u2022\u2013\u2014\-–—]\s/.test(paragraph);
-  const marginLines = isBullet ? (2 / LINE_HEIGHT_MM) : PARAGRAPH_MARGIN_LINES;
+
+  // Контекстные отступы:
+  const curBullet = isBulletLine(paragraph);
+  const nextBullet = nextParagraph ? isBulletLine(nextParagraph) : false;
+  const curBulletHeader = isBulletHeader(paragraph);
+  const curSection = isSectionHeading(paragraph);
+
+  let marginLines: number;
+  if (curSection) {
+    marginLines = 2 / LINE_HEIGHT_MM;  // CAPS-заголовок → маленький отступ
+  } else if (curBulletHeader && nextBullet) {
+    marginLines = 0;  // Заголовок списка → буллет: без отступа
+  } else if (curBullet && nextBullet) {
+    marginLines = 0;  // Буллет → буллет: без отступа
+  } else if (curBullet || curBulletHeader) {
+    marginLines = PARAGRAPH_MARGIN_LINES;  // Конец списка → полный отступ
+  } else {
+    marginLines = PARAGRAPH_MARGIN_LINES;  // Обычный текст → полный отступ
+  }
+
   return totalLines + marginLines;
 }
 
@@ -27,7 +66,7 @@ function estimateParagraphLines(paragraph: string, charsPerLine: number): number
  */
 function estimateHeightMm(paragraphs: string[], charsPerLine: number): number {
   const totalLines = paragraphs.reduce(
-    (sum, p) => sum + estimateParagraphLines(p, charsPerLine),
+    (sum, p, i) => sum + estimateParagraphLines(p, charsPerLine, paragraphs[i + 1]),
     0
   );
   return totalLines * LINE_HEIGHT_MM;
@@ -165,6 +204,8 @@ export function buildLayout(
       while (paraIndex < allParagraphs.length) {
         const slideParas: string[] = [];
         while (paraIndex < allParagraphs.length) {
+          // Секционный заголовок (CAPS) всегда начинает НОВЫЙ слайд
+          if (isSectionHeading(allParagraphs[paraIndex]) && slideParas.length > 0) break;
           const candidate = [...slideParas, allParagraphs[paraIndex]];
           const height = estimateHeightMm(candidate, CHARS_PER_LINE_FULLTEXT);
           if (height > contentTextHeightMm && slideParas.length > 0) break;
@@ -190,6 +231,8 @@ export function buildLayout(
     // Есть и текст, и фото → Content слайд
     const slideParas: string[] = [];
     while (paraIndex < allParagraphs.length) {
+      // Секционный заголовок (CAPS) всегда начинает НОВЫЙ слайд
+      if (isSectionHeading(allParagraphs[paraIndex]) && slideParas.length > 0) break;
       const candidate = [...slideParas, allParagraphs[paraIndex]];
       const height = estimateHeightMm(candidate, CHARS_PER_LINE_CONTENT);
       if (height > contentTextHeightMm && slideParas.length > 0) break;
