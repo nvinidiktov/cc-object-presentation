@@ -81,36 +81,50 @@ const FIT_TIERS = [
 ];
 
 /**
- * Проверяет, поместится ли текст на слайд хотя бы при одном из tier-ов шрифта.
- * Использует ту же логику, что fitTextToSlide в рендерере (preview + PDF).
+ * Проверяет, помещается ли текст при конкретном tier-е шрифта.
+ * tierIndex: 0 = 20pt (стандарт), 1 = 19pt, 2 = 18pt.
  * Порог 0.85 — чуть консервативнее рендерера (0.88), запас на погрешность.
+ */
+function fitsAtTier(
+  paragraphs: string[],
+  colWidthMm: number,
+  tierIndex: number,
+  contentHeightMm: number = PDF.CONTENT_HEIGHT_MM,
+): boolean {
+  const tier = FIT_TIERS[tierIndex];
+  const threshold = contentHeightMm * 0.85;
+  const adjustedCharWidth = CHAR_WIDTH_MM * (tier.fontSize / PDF.FONT_SIZE_BODY);
+  const cpl = Math.floor(colWidthMm / adjustedCharWidth);
+  const lineHeightMm = tier.fontSize * 0.353 * tier.lineHeight;
+  let totalHeight = 0;
+  for (let i = 0; i < paragraphs.length; i++) {
+    const para = paragraphs[i];
+    let paraLines = 0;
+    for (const line of para.split('\n')) {
+      paraLines += Math.max(1, Math.ceil(line.length / cpl));
+    }
+    const nextP = paragraphs[i + 1];
+    let mb = tier.marginMm;
+    if (!nextP) mb = 0;
+    else if (isBulletHeader(para) && isBulletLine(nextP)) mb = 0;
+    else if (isBulletLine(para) && isBulletLine(nextP)) mb = 0;
+    else if (isSectionHeading(para)) mb = 2;
+    totalHeight += paraLines * lineHeightMm + mb;
+  }
+  return totalHeight <= threshold;
+}
+
+/**
+ * Проверяет, поместится ли текст хотя бы при одном из tier-ов (20→19→18pt).
+ * Используется для splitOversizedParagraphs — разрезаем только если даже 18pt не хватает.
  */
 function canFitOnSlide(
   paragraphs: string[],
   colWidthMm: number,
   contentHeightMm: number = PDF.CONTENT_HEIGHT_MM,
 ): boolean {
-  const threshold = contentHeightMm * 0.85;
-  for (const tier of FIT_TIERS) {
-    const adjustedCharWidth = CHAR_WIDTH_MM * (tier.fontSize / PDF.FONT_SIZE_BODY);
-    const cpl = Math.floor(colWidthMm / adjustedCharWidth);
-    const lineHeightMm = tier.fontSize * 0.353 * tier.lineHeight;
-    let totalHeight = 0;
-    for (let i = 0; i < paragraphs.length; i++) {
-      const para = paragraphs[i];
-      let paraLines = 0;
-      for (const line of para.split('\n')) {
-        paraLines += Math.max(1, Math.ceil(line.length / cpl));
-      }
-      const nextP = paragraphs[i + 1];
-      let mb = tier.marginMm;
-      if (!nextP) mb = 0;
-      else if (isBulletHeader(para) && isBulletLine(nextP)) mb = 0;
-      else if (isBulletLine(para) && isBulletLine(nextP)) mb = 0;
-      else if (isSectionHeading(para)) mb = 2;
-      totalHeight += paraLines * lineHeightMm + mb;
-    }
-    if (totalHeight <= threshold) return true;
+  for (let t = 0; t < FIT_TIERS.length; t++) {
+    if (fitsAtTier(paragraphs, colWidthMm, t, contentHeightMm)) return true;
   }
   return false;
 }
@@ -297,19 +311,19 @@ export function buildLayout(
           // Секционный заголовок (CAPS) всегда начинает НОВЫЙ слайд
           if (isSectionHeading(block.paragraphs[0]) && slideParas.length > 0) break;
           const candidate = [...slideParas, ...block.paragraphs];
-          if (!canFitOnSlide(candidate, PDF.CONTENT_WIDTH_MM) && slideParas.length > 0) break;
-          if (!canFitOnSlide(candidate, PDF.CONTENT_WIDTH_MM) && slideParas.length === 0) {
-            // Блок не влезает даже при 18pt — помещаем принудительно
+          if (fitsAtTier(candidate, PDF.CONTENT_WIDTH_MM, 0)) {
+            // Влезает при 20pt — добавляем
+            slideParas.push(...block.paragraphs);
+            blockIndex++;
+          } else if (slideParas.length > 0) {
+            // Не влезает при 20pt, но уже есть контент → переносим на следующий слайд
+            break;
+          } else {
+            // Пустой слайд, блок слишком большой для 20pt → добавляем (рендерер уменьшит шрифт)
             slideParas.push(...block.paragraphs);
             blockIndex++;
             break;
           }
-          slideParas.push(...block.paragraphs);
-          blockIndex++;
-        }
-        if (slideParas.length === 0) {
-          slideParas.push(...blocks[blockIndex].paragraphs);
-          blockIndex++;
         }
         coreSlides.push({
           id: uuid(),
@@ -329,18 +343,19 @@ export function buildLayout(
       // Секционный заголовок (CAPS) всегда начинает НОВЫЙ слайд
       if (isSectionHeading(block.paragraphs[0]) && slideParas.length > 0) break;
       const candidate = [...slideParas, ...block.paragraphs];
-      if (!canFitOnSlide(candidate, PDF.TEXT_COLUMN_WIDTH_MM) && slideParas.length > 0) break;
-      if (!canFitOnSlide(candidate, PDF.TEXT_COLUMN_WIDTH_MM) && slideParas.length === 0) {
+      if (fitsAtTier(candidate, PDF.TEXT_COLUMN_WIDTH_MM, 0)) {
+        // Влезает при 20pt — добавляем
+        slideParas.push(...block.paragraphs);
+        blockIndex++;
+      } else if (slideParas.length > 0) {
+        // Не влезает при 20pt, но уже есть контент → переносим на следующий слайд
+        break;
+      } else {
+        // Пустой слайд, блок слишком большой для 20pt → добавляем (рендерер уменьшит шрифт)
         slideParas.push(...block.paragraphs);
         blockIndex++;
         break;
       }
-      slideParas.push(...block.paragraphs);
-      blockIndex++;
-    }
-    if (slideParas.length === 0) {
-      slideParas.push(...blocks[blockIndex].paragraphs);
-      blockIndex++;
     }
 
     const slidePhotoIds = regularPhotos
