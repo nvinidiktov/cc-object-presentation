@@ -167,9 +167,12 @@ function selectEvenlySpaced(
  */
 function enforceSpacing(all: HLPos[], kept: Set<number>, minSpacing: number): void {
   const sorted = all.filter(h => kept.has(h.idx)).sort((a, b) => a.plainPos - b.plainPos);
+  let lastKeptPos = sorted.length > 0 ? sorted[0].plainPos : 0;
   for (let i = 1; i < sorted.length; i++) {
-    if (sorted[i].plainPos - sorted[i - 1].plainPos < minSpacing) {
+    if (sorted[i].plainPos - lastKeptPos < minSpacing) {
       kept.delete(sorted[i].idx);
+    } else {
+      lastKeptPos = sorted[i].plainPos;
     }
   }
 }
@@ -268,7 +271,8 @@ function fitTitleName(name: string, maxWidthMm: number): number {
   const maxFontSize = PDF.FONT_SIZE_NAME; // 36pt
   const minFontSize = 18;
   // CSS font-weight:bold + text-transform:uppercase → кириллица BOLD CAPS значительно шире
-  const widthFactor = 1.5;
+  // 1.8: bold (+15%) * uppercase (+40%) ≈ 1.61, плюс запас на широкие буквы (Щ, Ж, Ш)
+  const widthFactor = 1.8;
   for (let fs = maxFontSize; fs >= minFontSize; fs--) {
     const charW = CHAR_WIDTH_MM * (fs / PDF.FONT_SIZE_BODY) * widthFactor;
     const charsPerLine = Math.floor(maxWidthMm / charW);
