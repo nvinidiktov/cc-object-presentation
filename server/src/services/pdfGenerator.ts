@@ -267,8 +267,8 @@ function estimateTextHeight(paragraphs: string[], colWidthMm: number): number {
 function fitTitleName(name: string, maxWidthMm: number): number {
   const maxFontSize = PDF.FONT_SIZE_NAME; // 36pt
   const minFontSize = 22;
-  // CSS text-transform: uppercase → всегда рендерим CAPS
-  const widthFactor = 1.15;
+  // CSS text-transform: uppercase → кириллица CAPS шире латиницы
+  const widthFactor = 1.3;
   for (let fs = maxFontSize; fs >= minFontSize; fs -= 2) {
     const charW = CHAR_WIDTH_MM * (fs / PDF.FONT_SIZE_BODY) * widthFactor;
     const charsPerLine = Math.floor(maxWidthMm / charW);
@@ -407,54 +407,51 @@ function isBulletHeader(text: string): boolean {
   return HEADER_COLON_RE.test(text.trim());
 }
 
-/**
- * Умный расчёт отступа после абзаца на основе контекста:
- * - Буллет → следующий буллет: 0mm (плотный список)
- * - Буллет → обычный текст: полный отступ (пустая строка)
- * - Заголовок с ":" → буллет/текст: 0mm (заголовок списка)
- * - Секционный заголовок (CAPS): 0mm → он всегда начинает слайд
- * - Обычный текст → что угодно: полный отступ
- */
-function computeMarginBottom(current: string, next: string | undefined, defaultMargin: string): string {
-  if (!next) return '0mm';  // последний — нет отступа
+/** Группирует абзацы для рендеринга: буллет-группы → один блок с <br/> */
+interface RenderBlock {
+  lines: string[];
+  isBulletGroup: boolean;
+  isSection: boolean;
+}
 
-  const curBullet = isBulletLine(current);
-  const nextBullet = isBulletLine(next);
-  const curBulletHeader = isBulletHeader(current);
-  const curSection = isSectionHeading(current);
-
-  // Заголовок списка ("Планировка:") перед буллетами → 0mm
-  if (curBulletHeader && nextBullet) return '0mm';
-
-  // Буллет → буллет: 0mm (плотный список)
-  if (curBullet && nextBullet) return '0mm';
-
-  // Секционный CAPS-заголовок → 2mm к следующему (после bullet-проверок!)
-  if (curSection) return '2mm';
-
-  // Буллет → обычный текст: полный отступ (пустая строка)
-  if (curBullet && !nextBullet) return defaultMargin;
-
-  // Заголовок с ":" но не перед буллетом → маленький отступ
-  if (curBulletHeader) return '2mm';
-
-  // Обычный текст → буллет: полный отступ
-  // Обычный текст → обычный текст: полный отступ
-  return defaultMargin;
+function groupForRendering(paragraphs: string[]): RenderBlock[] {
+  const blocks: RenderBlock[] = [];
+  let i = 0;
+  while (i < paragraphs.length) {
+    const p = paragraphs[i];
+    if (isBulletHeader(p) && i + 1 < paragraphs.length && isBulletLine(paragraphs[i + 1])) {
+      const lines = [p];
+      i++;
+      while (i < paragraphs.length && isBulletLine(paragraphs[i])) { lines.push(paragraphs[i]); i++; }
+      blocks.push({ lines, isBulletGroup: true, isSection: false });
+      continue;
+    }
+    if (isBulletLine(p)) {
+      const lines: string[] = [];
+      while (i < paragraphs.length && isBulletLine(paragraphs[i])) { lines.push(paragraphs[i]); i++; }
+      blocks.push({ lines, isBulletGroup: true, isSection: false });
+      continue;
+    }
+    blocks.push({ lines: [p], isBulletGroup: false, isSection: isSectionHeading(p) });
+    i++;
+  }
+  return blocks;
 }
 
 // ─── Content slide ────────────────────────────────────────────────────────────
 
 function renderContentSlide(paragraphs: string[], photos: Photo[], hlMap: Map<string, string>): string {
-  // Многоуровневое авто-сжатие шрифта (на оригинальном plain-тексте!)
   const fit = fitTextToSlide(paragraphs, PDF.TEXT_COLUMN_WIDTH_MM);
+  const blocks = groupForRendering(paragraphs);
 
-  const textHtml = paragraphs.map((p, i) => {
-    const hl = hlMap.get(p) ?? p;
-    const mb = computeMarginBottom(p, paragraphs[i + 1], fit.marginBottom);
-    const isSectionHeader = isSectionHeading(p);
-    const fontWeight = isSectionHeader ? '; font-weight:bold' : '';
-    return `<p class="body-p" style="font-size:${fit.fontSize}pt; line-height:${fit.lineHeight}; margin-bottom:${mb}${fontWeight}">${hl.replace(/\n/g, '<br/>')}</p>`;
+  const textHtml = blocks.map((block, i) => {
+    const isLast = i === blocks.length - 1;
+    const mb = isLast ? '0mm' : (block.isSection ? '2mm' : fit.marginBottom);
+    const fontWeight = block.isSection ? '; font-weight:bold' : '';
+    // Каждая строка блока → подсветка отдельно, соединение через <br/>
+    const hlLines = block.lines.map(line => hlMap.get(line) ?? line);
+    const hlText = hlLines.join('<br/>');
+    return `<p class="body-p" style="font-size:${fit.fontSize}pt; line-height:${fit.lineHeight}; margin-bottom:${mb}${fontWeight}">${hlText}</p>`;
   }).join('');
 
   return `
@@ -477,17 +474,17 @@ function renderFullscreenSlide(photo: Photo): string {
 // ─── Full-text slide (без фото, шрифт чуть крупнее) ──────────────────────────
 
 function renderFullTextSlide(paragraphs: string[], hlMap: Map<string, string>): string {
-  // Многоуровневое авто-сжатие (на оригинальном plain-тексте!)
   const fit = fitTextToSlide(paragraphs, PDF.CONTENT_WIDTH_MM);
-  // Если текст влезает без сжатия — используем чуть больший шрифт для full-text
   const fontSize = (fit.fontSize === PDF.FONT_SIZE_BODY) ? PDF.FONT_SIZE_BODY_FULL : fit.fontSize;
+  const blocks = groupForRendering(paragraphs);
 
-  const textHtml = paragraphs.map((p, i) => {
-    const hl = hlMap.get(p) ?? p;
-    const mb = computeMarginBottom(p, paragraphs[i + 1], fit.marginBottom);
-    const isSectionHeader = isSectionHeading(p);
-    const fontWeight = isSectionHeader ? '; font-weight:bold' : '';
-    return `<p class="body-p" style="font-size:${fontSize}pt; line-height:${fit.lineHeight}; margin-bottom:${mb}${fontWeight}">${hl.replace(/\n/g, '<br/>')}</p>`;
+  const textHtml = blocks.map((block, i) => {
+    const isLast = i === blocks.length - 1;
+    const mb = isLast ? '0mm' : (block.isSection ? '2mm' : fit.marginBottom);
+    const fontWeight = block.isSection ? '; font-weight:bold' : '';
+    const hlLines = block.lines.map(line => hlMap.get(line) ?? line);
+    const hlText = hlLines.join('<br/>');
+    return `<p class="body-p" style="font-size:${fontSize}pt; line-height:${fit.lineHeight}; margin-bottom:${mb}${fontWeight}">${hlText}</p>`;
   }).join('');
 
   return `
@@ -605,7 +602,7 @@ const CSS = `
 
   /* ── Advantages ── */
   .adv-list { list-style: disc; padding-left: 8mm; font-size: ${PDF.FONT_SIZE_BULLET}pt; line-height: ${PDF.LINE_HEIGHT}; }
-  .adv-item { margin-bottom: 2.5mm; }
+  .adv-item { margin-bottom: 0; }
 
   /* ── Photos column ── */
   .photos-col { width: ${PDF.PHOTO_COLUMN_WIDTH_MM}mm; display: flex; flex-direction: column; gap: ${PDF.PHOTO_GAP_MM}mm; flex-shrink: 0; align-items: flex-end; justify-content: center; }

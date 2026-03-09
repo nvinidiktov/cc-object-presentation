@@ -93,19 +93,37 @@ function isSectionHeading(text: string): boolean {
 }
 function isBulletHeader(text: string): boolean { return HEADER_COLON_RE.test(text.trim()); }
 
-/** Умный отступ между абзацами с учётом контекста */
-function computeMarginMm(current: string, next: string | undefined, defaultMb: number): number {
-  if (!next) return 0;
-  const curBullet = isBulletLine(current);
-  const nextBullet = isBulletLine(next);
-  const curBulletHdr = isBulletHeader(current);
-  const curSection = isSectionHeading(current);
-  if (curBulletHdr && nextBullet) return 0;
-  if (curBullet && nextBullet) return 0;
-  if (curBullet && !nextBullet) return defaultMb;
-  if (curBulletHdr) return 2;
-  if (curSection) return 2;
-  return defaultMb;
+/** Группирует абзацы для рендеринга: буллет-группы → один блок с \n */
+interface RenderBlock {
+  lines: string[];
+  isBulletGroup: boolean;
+  isSection: boolean;
+}
+
+function groupForRendering(paragraphs: string[]): RenderBlock[] {
+  const blocks: RenderBlock[] = [];
+  let i = 0;
+  while (i < paragraphs.length) {
+    const p = paragraphs[i];
+    // Заголовок с ":" + буллеты → один блок
+    if (isBulletHeader(p) && i + 1 < paragraphs.length && isBulletLine(paragraphs[i + 1])) {
+      const lines = [p];
+      i++;
+      while (i < paragraphs.length && isBulletLine(paragraphs[i])) { lines.push(paragraphs[i]); i++; }
+      blocks.push({ lines, isBulletGroup: true, isSection: false });
+      continue;
+    }
+    // Последовательные буллеты → один блок
+    if (isBulletLine(p)) {
+      const lines: string[] = [];
+      while (i < paragraphs.length && isBulletLine(paragraphs[i])) { lines.push(paragraphs[i]); i++; }
+      blocks.push({ lines, isBulletGroup: true, isSection: false });
+      continue;
+    }
+    blocks.push({ lines: [p], isBulletGroup: false, isSection: isSectionHeading(p) });
+    i++;
+  }
+  return blocks;
 }
 
 function PhotosColumn({ photos }: { photos: Photo[] }) {
@@ -135,8 +153,8 @@ function PhotosColumn({ photos }: { photos: Photo[] }) {
 function fitTitleName(name: string, maxWidthMm: number): number {
   const maxFontSize = PDF.FONT_SIZE_NAME; // 36pt
   const minFontSize = 22;
-  // CSS text-transform: uppercase → всегда CAPS
-  const widthFactor = 1.15;
+  // CSS text-transform: uppercase → кириллица CAPS шире латиницы
+  const widthFactor = 1.3;
   for (let fs = maxFontSize; fs >= minFontSize; fs -= 2) {
     const charW = CHAR_WIDTH_MM * (fs / PDF.FONT_SIZE_BODY) * widthFactor;
     const charsPerLine = Math.floor(maxWidthMm / charW);
@@ -242,7 +260,7 @@ function AdvantagesSlide({ advantages, photos }: { advantages: string[]; photos:
           </div>
           <ul style={{ listStyle: 'disc', paddingLeft: px(8), fontSize: pt(fontSize), lineHeight: lh }}>
             {advantages.map((a, i) => (
-              <li key={i} style={{ marginBottom: px(2.5) }}>{a}</li>
+              <li key={i} style={{ marginBottom: 0 }}>{a}</li>
             ))}
           </ul>
         </div>
@@ -256,16 +274,17 @@ function AdvantagesSlide({ advantages, photos }: { advantages: string[]; photos:
 
 function ContentSlide({ paragraphs, photos }: { paragraphs: string[]; photos: Photo[] }) {
   const fit = fitTextToSlide(paragraphs, PDF.TEXT_COLUMN_WIDTH_MM);
+  const blocks = groupForRendering(paragraphs);
 
   return (
     <div style={S.slide}>
       <div style={S.body}>
         <div style={S.textCol}>
-          {paragraphs.map((p, i) => {
-            const mb = computeMarginMm(p, paragraphs[i + 1], fit.marginBottom);
-            const isHeader = isSectionHeading(p);
+          {blocks.map((block, i) => {
+            const isLast = i === blocks.length - 1;
+            const mb = isLast ? 0 : (block.isSection ? 2 : fit.marginBottom);
             return (
-              <p key={i} style={{ fontSize: pt(fit.fontSize), margin: 0, marginBottom: px(mb), lineHeight: fit.lineHeight, textAlign: 'left', whiteSpace: 'pre-wrap', fontWeight: isHeader ? 'bold' : undefined }}>{p}</p>
+              <p key={i} style={{ fontSize: pt(fit.fontSize), margin: 0, marginBottom: px(mb), lineHeight: fit.lineHeight, textAlign: 'left', whiteSpace: 'pre-wrap', fontWeight: block.isSection ? 'bold' : undefined }}>{block.lines.join('\n')}</p>
             );
           })}
         </div>
@@ -291,15 +310,16 @@ function FullscreenSlide({ photo }: { photo?: Photo }) {
 function FullTextSlide({ paragraphs }: { paragraphs: string[] }) {
   const fit = fitTextToSlide(paragraphs, PDF.CONTENT_WIDTH_MM);
   const fontSize = (fit.fontSize === PDF.FONT_SIZE_BODY) ? PDF.FONT_SIZE_BODY_FULL : fit.fontSize;
+  const blocks = groupForRendering(paragraphs);
 
   return (
     <div style={S.slide}>
       <div style={S.textColFull}>
-        {paragraphs.map((p, i) => {
-          const mb = computeMarginMm(p, paragraphs[i + 1], fit.marginBottom);
-          const isHeader = isSectionHeading(p);
+        {blocks.map((block, i) => {
+          const isLast = i === blocks.length - 1;
+          const mb = isLast ? 0 : (block.isSection ? 2 : fit.marginBottom);
           return (
-            <p key={i} style={{ fontSize: pt(fontSize), margin: 0, marginBottom: px(mb), lineHeight: fit.lineHeight, textAlign: 'left', whiteSpace: 'pre-wrap', fontWeight: isHeader ? 'bold' : undefined }}>{p}</p>
+            <p key={i} style={{ fontSize: pt(fontSize), margin: 0, marginBottom: px(mb), lineHeight: fit.lineHeight, textAlign: 'left', whiteSpace: 'pre-wrap', fontWeight: block.isSection ? 'bold' : undefined }}>{block.lines.join('\n')}</p>
           );
         })}
       </div>
