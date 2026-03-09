@@ -1,5 +1,5 @@
 import { Property, Photo, Slide, SlideType, LayoutResult } from 'shared';
-import { LINE_HEIGHT_MM, CHARS_PER_LINE_CONTENT, CHARS_PER_LINE_FULLTEXT, PDF } from 'shared';
+import { LINE_HEIGHT_MM, CHAR_WIDTH_MM, CHARS_PER_LINE_CONTENT, CHARS_PER_LINE_FULLTEXT, PDF } from 'shared';
 
 const PARAGRAPH_MARGIN_LINES = PDF.PARAGRAPH_MARGIN_MM / LINE_HEIGHT_MM; // ≈0.33
 import { v4 as uuid } from 'uuid';
@@ -72,6 +72,49 @@ function estimateHeightMm(paragraphs: string[], charsPerLine: number): number {
   return totalLines * LINE_HEIGHT_MM;
 }
 
+// ─── Tier-aware slide fit check (mirrors fitTextToSlide in renderer) ──────────
+
+const FIT_TIERS = [
+  { fontSize: 20, lineHeight: 1.2,  marginMm: 8 },
+  { fontSize: 19, lineHeight: 1.15, marginMm: 7 },
+  { fontSize: 18, lineHeight: 1.1,  marginMm: 6 },
+];
+
+/**
+ * Проверяет, поместится ли текст на слайд хотя бы при одном из tier-ов шрифта.
+ * Использует ту же логику, что fitTextToSlide в рендерере (preview + PDF).
+ * Порог 0.85 — чуть консервативнее рендерера (0.88), запас на погрешность.
+ */
+function canFitOnSlide(
+  paragraphs: string[],
+  colWidthMm: number,
+  contentHeightMm: number = PDF.CONTENT_HEIGHT_MM,
+): boolean {
+  const threshold = contentHeightMm * 0.85;
+  for (const tier of FIT_TIERS) {
+    const adjustedCharWidth = CHAR_WIDTH_MM * (tier.fontSize / PDF.FONT_SIZE_BODY);
+    const cpl = Math.floor(colWidthMm / adjustedCharWidth);
+    const lineHeightMm = tier.fontSize * 0.353 * tier.lineHeight;
+    let totalHeight = 0;
+    for (let i = 0; i < paragraphs.length; i++) {
+      const para = paragraphs[i];
+      let paraLines = 0;
+      for (const line of para.split('\n')) {
+        paraLines += Math.max(1, Math.ceil(line.length / cpl));
+      }
+      const nextP = paragraphs[i + 1];
+      let mb = tier.marginMm;
+      if (!nextP) mb = 0;
+      else if (isBulletHeader(para) && isBulletLine(nextP)) mb = 0;
+      else if (isBulletLine(para) && isBulletLine(nextP)) mb = 0;
+      else if (isSectionHeading(para)) mb = 2;
+      totalHeight += paraLines * lineHeightMm + mb;
+    }
+    if (totalHeight <= threshold) return true;
+  }
+  return false;
+}
+
 // ─── Auto-split oversized paragraphs by sentence boundaries ─────────────────
 
 /**
@@ -80,12 +123,11 @@ function estimateHeightMm(paragraphs: string[], charsPerLine: number): number {
  */
 function splitOversizedParagraphs(
   paragraphs: string[],
-  charsPerLine: number,
-  maxHeightMm: number
+  colWidthMm: number,
 ): string[] {
   const result: string[] = [];
   for (const para of paragraphs) {
-    if (estimateHeightMm([para], charsPerLine) <= maxHeightMm) {
+    if (canFitOnSlide([para], colWidthMm)) {
       result.push(para);
       continue;
     }
@@ -93,7 +135,6 @@ function splitOversizedParagraphs(
     // Не ломает "кв.м.", "т.д.", "д. 5" и подобные сокращения
     const sentences = para.match(/[^.!?]*(?:[.!?]+(?=\s+[А-ЯA-Z«"(•\-–—])|[.!?]+\s*$)/g);
     if (!sentences) {
-      // Нет знаков препинания — пушим как есть (жадный алгоритм выдаст warning)
       result.push(para);
       continue;
     }
@@ -101,7 +142,7 @@ function splitOversizedParagraphs(
     let chunk = '';
     for (const sent of sentences) {
       const candidate = chunk + sent;
-      if (chunk && estimateHeightMm([candidate], charsPerLine) > maxHeightMm) {
+      if (chunk && !canFitOnSlide([candidate], colWidthMm)) {
         result.push(chunk.trim());
         chunk = sent;
       } else {
@@ -179,11 +220,10 @@ export function buildLayout(
     .filter(p => p.length > 0);
 
   // Авто-разбивка слишком длинных абзацев по предложениям
-  const contentTextHeightMm = PDF.CONTENT_HEIGHT_MM * 0.75;
+  // Используем ширину текстовой колонки (самая узкая = content слайд)
   const allParagraphs = splitOversizedParagraphs(
     rawParagraphs,
-    CHARS_PER_LINE_CONTENT,
-    contentTextHeightMm
+    PDF.TEXT_COLUMN_WIDTH_MM,
   );
 
   // Делим фото по типам
@@ -257,13 +297,11 @@ export function buildLayout(
           // Секционный заголовок (CAPS) всегда начинает НОВЫЙ слайд
           if (isSectionHeading(block.paragraphs[0]) && slideParas.length > 0) break;
           const candidate = [...slideParas, ...block.paragraphs];
-          const height = estimateHeightMm(candidate, CHARS_PER_LINE_FULLTEXT);
-          if (height > contentTextHeightMm && slideParas.length > 0) break;
-          if (height > contentTextHeightMm && slideParas.length === 0) {
-            // Блок не влезает даже один — помещаем принудительно
+          if (!canFitOnSlide(candidate, PDF.CONTENT_WIDTH_MM) && slideParas.length > 0) break;
+          if (!canFitOnSlide(candidate, PDF.CONTENT_WIDTH_MM) && slideParas.length === 0) {
+            // Блок не влезает даже при 18pt — помещаем принудительно
             slideParas.push(...block.paragraphs);
             blockIndex++;
-            warnings.push('Один из блоков текста очень длинный и может не влезть на слайд.');
             break;
           }
           slideParas.push(...block.paragraphs);
@@ -272,7 +310,6 @@ export function buildLayout(
         if (slideParas.length === 0) {
           slideParas.push(...blocks[blockIndex].paragraphs);
           blockIndex++;
-          warnings.push('Один из блоков текста очень длинный и может не влезть на слайд.');
         }
         coreSlides.push({
           id: uuid(),
@@ -292,12 +329,10 @@ export function buildLayout(
       // Секционный заголовок (CAPS) всегда начинает НОВЫЙ слайд
       if (isSectionHeading(block.paragraphs[0]) && slideParas.length > 0) break;
       const candidate = [...slideParas, ...block.paragraphs];
-      const height = estimateHeightMm(candidate, CHARS_PER_LINE_CONTENT);
-      if (height > contentTextHeightMm && slideParas.length > 0) break;
-      if (height > contentTextHeightMm && slideParas.length === 0) {
+      if (!canFitOnSlide(candidate, PDF.TEXT_COLUMN_WIDTH_MM) && slideParas.length > 0) break;
+      if (!canFitOnSlide(candidate, PDF.TEXT_COLUMN_WIDTH_MM) && slideParas.length === 0) {
         slideParas.push(...block.paragraphs);
         blockIndex++;
-        warnings.push('Один из блоков текста очень длинный и может не влезть на слайд.');
         break;
       }
       slideParas.push(...block.paragraphs);
@@ -306,7 +341,6 @@ export function buildLayout(
     if (slideParas.length === 0) {
       slideParas.push(...blocks[blockIndex].paragraphs);
       blockIndex++;
-      warnings.push('Один из блоков текста очень длинный и может не влезть на слайд.');
     }
 
     const slidePhotoIds = regularPhotos
