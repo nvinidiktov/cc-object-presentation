@@ -416,15 +416,15 @@ export function buildLayout(
           // Секционный заголовок (CAPS) всегда начинает НОВЫЙ слайд
           if (isSectionHeading(block.paragraphs[0]) && slideParas.length > 0) break;
           const candidate = [...slideParas, ...block.paragraphs];
-          if (fitsAtTier(candidate, PDF.CONTENT_WIDTH_MM, 0)) {
-            // Влезает при 20pt — добавляем
+          if (canFitOnSlide(candidate, PDF.CONTENT_WIDTH_MM)) {
+            // Влезает при 20/19/18pt — добавляем (рендерер подберёт шрифт)
             slideParas.push(...block.paragraphs);
             blockIndex++;
           } else if (slideParas.length > 0) {
-            // Не влезает при 20pt, но уже есть контент → переносим на следующий слайд
+            // Не влезает даже при 18pt, но уже есть контент → переносим на следующий слайд
             break;
           } else {
-            // Пустой слайд, блок слишком большой для 20pt → добавляем (рендерер уменьшит шрифт)
+            // Пустой слайд, блок не влезает даже при 18pt → добавляем (ensureAllBlocksFit гарантирует)
             slideParas.push(...block.paragraphs);
             blockIndex++;
             break;
@@ -448,15 +448,15 @@ export function buildLayout(
       // Секционный заголовок (CAPS) всегда начинает НОВЫЙ слайд
       if (isSectionHeading(block.paragraphs[0]) && slideParas.length > 0) break;
       const candidate = [...slideParas, ...block.paragraphs];
-      if (fitsAtTier(candidate, PDF.TEXT_COLUMN_WIDTH_MM, 0)) {
-        // Влезает при 20pt — добавляем
+      if (canFitOnSlide(candidate, PDF.TEXT_COLUMN_WIDTH_MM)) {
+        // Влезает при 20/19/18pt — добавляем (рендерер подберёт шрифт)
         slideParas.push(...block.paragraphs);
         blockIndex++;
       } else if (slideParas.length > 0) {
-        // Не влезает при 20pt, но уже есть контент → переносим на следующий слайд
+        // Не влезает даже при 18pt, но уже есть контент → переносим на следующий слайд
         break;
       } else {
-        // Пустой слайд, блок слишком большой для 20pt → добавляем (рендерер уменьшит шрифт)
+        // Пустой слайд, блок не влезает даже при 18pt → добавляем (ensureAllBlocksFit гарантирует)
         slideParas.push(...block.paragraphs);
         blockIndex++;
         break;
