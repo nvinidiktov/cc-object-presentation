@@ -15,6 +15,35 @@ const TEXT_TIERS = [
   { fontSize: 18, lineHeight: 1.1,  marginBottom: 6 },
 ];
 
+// ─── Paragraph type helpers (mirror server/PDF logic) ────────────────────────
+
+const BULLET_RE = /^[\u2022\u2013\u2014\-–—]\s/;
+const HEADER_COLON_RE = /:\s*$/;
+
+function isBulletLine(text: string): boolean { return BULLET_RE.test(text); }
+function isSectionHeading(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  const letters = trimmed.replace(/[^a-zA-Zа-яА-ЯёЁ]/g, '');
+  return letters.length >= 3 && letters === letters.toUpperCase() && letters !== letters.toLowerCase();
+}
+function isBulletHeader(text: string): boolean { return HEADER_COLON_RE.test(text.trim()); }
+
+/** Склейка абзацев для textarea: буллеты через \n, обычные абзацы через \n\n */
+function smartJoinParagraphs(paragraphs: string[]): string {
+  if (paragraphs.length === 0) return '';
+  let result = paragraphs[0];
+  for (let i = 1; i < paragraphs.length; i++) {
+    const prev = paragraphs[i - 1];
+    const curr = paragraphs[i];
+    const singleNewline =
+      (isBulletHeader(prev) && isBulletLine(curr)) ||
+      (isBulletLine(prev) && isBulletLine(curr));
+    result += (singleNewline ? '\n' : '\n\n') + curr;
+  }
+  return result;
+}
+
 interface TextCapacity {
   tier: number;       // 1-3 (какой тир нужен), 0 = не помещается
   fillPercent: number; // % заполненности при Tier 1
@@ -26,12 +55,20 @@ function estimateHeight(paragraphs: string[], colWidthMm: number, tier: typeof T
   const cpl = Math.floor(colWidthMm / adjustedCharWidth);
   const lineHeightMm = tier.fontSize * 0.353 * tier.lineHeight;
   let totalHeight = 0;
-  for (const para of paragraphs) {
+  for (let i = 0; i < paragraphs.length; i++) {
+    const para = paragraphs[i];
     let paraLines = 0;
     for (const line of para.split('\n')) {
       paraLines += Math.max(1, Math.ceil(line.length / cpl));
     }
-    totalHeight += paraLines * lineHeightMm + tier.marginBottom;
+    // Контекстные отступы: буллеты без отступа, секции 2mm, остальное — полный
+    const nextP = paragraphs[i + 1];
+    let mb = tier.marginBottom;
+    if (!nextP) mb = 0;
+    else if (isBulletHeader(para) && isBulletLine(nextP)) mb = 0;
+    else if (isBulletLine(para) && isBulletLine(nextP)) mb = 0;
+    else if (isSectionHeading(para)) mb = 2;
+    totalHeight += paraLines * lineHeightMm + mb;
   }
   return totalHeight;
 }
@@ -180,7 +217,7 @@ const SlideEditorCard = React.memo(function SlideEditorCard({
 
   // Автоподстройка высоты textarea
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const textValue = (slide.paragraphs ?? []).join('\n\n');
+  const textValue = smartJoinParagraphs(slide.paragraphs ?? []);
   const lastValidText = useRef(textValue);
 
   useEffect(() => {
@@ -210,9 +247,8 @@ const SlideEditorCard = React.memo(function SlideEditorCard({
   const handleTextChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       const text = e.target.value;
-      // Разделяем на абзацы по двойному переводу строки, сохраняем пустые
-      const rawParagraphs = text.split(/\n\n/);
-      // Для проверки ёмкости — все абзацы (пустые тоже занимают место как отступ)
+      // Разделяем на абзацы: каждая строка = абзац (согласованно с layout engine)
+      const rawParagraphs = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
       const cap = checkTextCapacity(rawParagraphs, colWidthMm);
       if (!cap.fits) {
         e.target.value = lastValidText.current;
