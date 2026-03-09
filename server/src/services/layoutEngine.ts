@@ -46,14 +46,14 @@ function estimateParagraphLines(paragraph: string, charsPerLine: number, nextPar
   const curSection = isSectionHeading(paragraph);
 
   let marginLines: number;
-  if (curSection) {
-    marginLines = 2 / LINE_HEIGHT_MM;  // CAPS-заголовок → маленький отступ
-  } else if (curBulletHeader && nextBullet) {
+  if (curBulletHeader && nextBullet) {
     marginLines = 0;  // Заголовок списка → буллет: без отступа
   } else if (curBullet && nextBullet) {
     marginLines = 0;  // Буллет → буллет: без отступа
   } else if (curBullet || curBulletHeader) {
     marginLines = PARAGRAPH_MARGIN_LINES;  // Конец списка → полный отступ
+  } else if (curSection) {
+    marginLines = 2 / LINE_HEIGHT_MM;  // CAPS-заголовок → маленький отступ
   } else {
     marginLines = PARAGRAPH_MARGIN_LINES;  // Обычный текст → полный отступ
   }
@@ -111,6 +111,57 @@ function splitOversizedParagraphs(
     if (chunk.trim()) result.push(chunk.trim());
   }
   return result;
+}
+
+// ─── Atomic text blocks (bullet groups stay together) ────────────────────────
+
+interface TextBlock {
+  paragraphs: string[];
+  isAtomicGroup: boolean;
+}
+
+/**
+ * Группирует абзацы в атомарные блоки:
+ * - Заголовок с ":" + последующие буллеты → один неразрывный блок
+ * - Последовательные буллеты без заголовка → один неразрывный блок
+ * - Обычный абзац или секционный заголовок → отдельный блок
+ */
+function groupParagraphsIntoBlocks(paragraphs: string[]): TextBlock[] {
+  const blocks: TextBlock[] = [];
+  let i = 0;
+
+  while (i < paragraphs.length) {
+    const p = paragraphs[i];
+
+    // Заголовок с ":" + буллеты → атомарная группа
+    if (isBulletHeader(p) && i + 1 < paragraphs.length && isBulletLine(paragraphs[i + 1])) {
+      const group = [p];
+      i++;
+      while (i < paragraphs.length && isBulletLine(paragraphs[i])) {
+        group.push(paragraphs[i]);
+        i++;
+      }
+      blocks.push({ paragraphs: group, isAtomicGroup: true });
+      continue;
+    }
+
+    // Последовательные буллеты без заголовка → атомарная группа
+    if (isBulletLine(p)) {
+      const group: string[] = [];
+      while (i < paragraphs.length && isBulletLine(paragraphs[i])) {
+        group.push(paragraphs[i]);
+        i++;
+      }
+      blocks.push({ paragraphs: group, isAtomicGroup: true });
+      continue;
+    }
+
+    // Обычный абзац или секционный заголовок
+    blocks.push({ paragraphs: [p], isAtomicGroup: false });
+    i++;
+  }
+
+  return blocks;
 }
 
 // ─── Main layout engine ──────────────────────────────────────────────────────
@@ -175,17 +226,15 @@ export function buildLayout(
     });
   }
 
-  // ─── Слайды с контентом: жадный алгоритм ─────────────────────────────────
-  let paraIndex = 0;
+  // ─── Слайды с контентом: жадный алгоритм с атомарными блоками ──────────
+  const blocks = groupParagraphsIntoBlocks(allParagraphs);
+  let blockIndex = 0;
 
-  while (paraIndex < allParagraphs.length || regularPhotoIndex < regularPhotos.length) {
-    const remainingParas = allParagraphs.slice(paraIndex);
-    const remainingPhotos = regularPhotos.slice(regularPhotoIndex);
+  while (blockIndex < blocks.length || regularPhotoIndex < regularPhotos.length) {
+    if (blockIndex >= blocks.length && regularPhotoIndex >= regularPhotos.length) break;
 
-    if (remainingParas.length === 0 && remainingPhotos.length === 0) break;
-
-    // Если закончились абзацы, но фото ещё есть → Photo Grid слайды
-    if (remainingParas.length === 0) {
+    // Если закончились блоки текста, но фото ещё есть → Photo Grid слайды
+    if (blockIndex >= blocks.length) {
       while (regularPhotoIndex < regularPhotos.length) {
         const batch = regularPhotos.slice(regularPhotoIndex, regularPhotoIndex + 4);
         coreSlides.push({
@@ -200,22 +249,30 @@ export function buildLayout(
     }
 
     // Если закончились фото, но текст ещё есть → Full-text слайды
-    if (remainingPhotos.length === 0) {
-      while (paraIndex < allParagraphs.length) {
+    if (regularPhotoIndex >= regularPhotos.length) {
+      while (blockIndex < blocks.length) {
         const slideParas: string[] = [];
-        while (paraIndex < allParagraphs.length) {
+        while (blockIndex < blocks.length) {
+          const block = blocks[blockIndex];
           // Секционный заголовок (CAPS) всегда начинает НОВЫЙ слайд
-          if (isSectionHeading(allParagraphs[paraIndex]) && slideParas.length > 0) break;
-          const candidate = [...slideParas, allParagraphs[paraIndex]];
+          if (isSectionHeading(block.paragraphs[0]) && slideParas.length > 0) break;
+          const candidate = [...slideParas, ...block.paragraphs];
           const height = estimateHeightMm(candidate, CHARS_PER_LINE_FULLTEXT);
           if (height > contentTextHeightMm && slideParas.length > 0) break;
-          slideParas.push(allParagraphs[paraIndex]);
-          paraIndex++;
+          if (height > contentTextHeightMm && slideParas.length === 0) {
+            // Блок не влезает даже один — помещаем принудительно
+            slideParas.push(...block.paragraphs);
+            blockIndex++;
+            warnings.push('Один из блоков текста очень длинный и может не влезть на слайд.');
+            break;
+          }
+          slideParas.push(...block.paragraphs);
+          blockIndex++;
         }
         if (slideParas.length === 0) {
-          slideParas.push(allParagraphs[paraIndex]);
-          paraIndex++;
-          warnings.push('Один из абзацев очень длинный и может не влезть на слайд.');
+          slideParas.push(...blocks[blockIndex].paragraphs);
+          blockIndex++;
+          warnings.push('Один из блоков текста очень длинный и может не влезть на слайд.');
         }
         coreSlides.push({
           id: uuid(),
@@ -228,21 +285,28 @@ export function buildLayout(
       break;
     }
 
-    // Есть и текст, и фото → Content слайд
+    // Есть и текст, и фото → Content слайд (блоки = атомарные единицы)
     const slideParas: string[] = [];
-    while (paraIndex < allParagraphs.length) {
+    while (blockIndex < blocks.length) {
+      const block = blocks[blockIndex];
       // Секционный заголовок (CAPS) всегда начинает НОВЫЙ слайд
-      if (isSectionHeading(allParagraphs[paraIndex]) && slideParas.length > 0) break;
-      const candidate = [...slideParas, allParagraphs[paraIndex]];
+      if (isSectionHeading(block.paragraphs[0]) && slideParas.length > 0) break;
+      const candidate = [...slideParas, ...block.paragraphs];
       const height = estimateHeightMm(candidate, CHARS_PER_LINE_CONTENT);
       if (height > contentTextHeightMm && slideParas.length > 0) break;
-      slideParas.push(allParagraphs[paraIndex]);
-      paraIndex++;
+      if (height > contentTextHeightMm && slideParas.length === 0) {
+        slideParas.push(...block.paragraphs);
+        blockIndex++;
+        warnings.push('Один из блоков текста очень длинный и может не влезть на слайд.');
+        break;
+      }
+      slideParas.push(...block.paragraphs);
+      blockIndex++;
     }
     if (slideParas.length === 0) {
-      slideParas.push(allParagraphs[paraIndex]);
-      paraIndex++;
-      warnings.push('Один из абзацев очень длинный и может не влезть на слайд.');
+      slideParas.push(...blocks[blockIndex].paragraphs);
+      blockIndex++;
+      warnings.push('Один из блоков текста очень длинный и может не влезть на слайд.');
     }
 
     const slidePhotoIds = regularPhotos

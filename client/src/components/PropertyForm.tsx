@@ -137,7 +137,7 @@ export default function PropertyForm({
   });
 
   // ─── Лимит полей таблицы: 10 строк макс (стандартные + дополнительные) ──────
-  const MAX_TABLE_ROWS = 10;
+  const MAX_TABLE_ROWS = 8;
   const watchedArea = watch('area');
   const watchedFloor = watch('floor');
   const watchedFinish = watch('finish');

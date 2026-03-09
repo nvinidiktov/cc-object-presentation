@@ -41,9 +41,9 @@ function fitTextToSlide(
       const nextP = paragraphs[i + 1];
       let mb = tier.marginBottom;
       if (!nextP) mb = 0;
-      else if (isSectionHeading(para)) mb = 2;
       else if (isBulletHeader(para) && isBulletLine(nextP)) mb = 0;
       else if (isBulletLine(para) && isBulletLine(nextP)) mb = 0;
+      else if (isSectionHeading(para)) mb = 2;
       totalHeight += paraLines * lineHeightMm + mb;
     }
     if (totalHeight <= contentHeightMm * 0.88) {
@@ -100,11 +100,11 @@ function computeMarginMm(current: string, next: string | undefined, defaultMb: n
   const nextBullet = isBulletLine(next);
   const curBulletHdr = isBulletHeader(current);
   const curSection = isSectionHeading(current);
-  if (curSection) return 2;
   if (curBulletHdr && nextBullet) return 0;
   if (curBullet && nextBullet) return 0;
   if (curBullet && !nextBullet) return defaultMb;
   if (curBulletHdr) return 2;
+  if (curSection) return 2;
   return defaultMb;
 }
 
@@ -135,8 +135,8 @@ function PhotosColumn({ photos }: { photos: Photo[] }) {
 function fitTitleName(name: string, maxWidthMm: number): number {
   const maxFontSize = PDF.FONT_SIZE_NAME; // 36pt
   const minFontSize = 22;
-  const isUpperCase = name === name.toUpperCase();
-  const widthFactor = isUpperCase ? 1.15 : 1.0;
+  // CSS text-transform: uppercase → всегда CAPS
+  const widthFactor = 1.15;
   for (let fs = maxFontSize; fs >= minFontSize; fs -= 2) {
     const charW = CHAR_WIDTH_MM * (fs / PDF.FONT_SIZE_BODY) * widthFactor;
     const charsPerLine = Math.floor(maxWidthMm / charW);

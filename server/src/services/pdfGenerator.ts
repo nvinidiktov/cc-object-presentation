@@ -210,9 +210,9 @@ function estimateTextHeightWithParams(
     const curSection = isSectionHeading(para);
     let mb = marginMm;
     if (!paragraphs[i + 1]) mb = 0;
-    else if (curSection) mb = 2;
     else if (curBulletHdr && nextBullet) mb = 0;
     else if (curBullet && nextBullet) mb = 0;
+    else if (curSection) mb = 2;
     totalHeight += paraLines * lineHeightMm + mb;
   }
   return totalHeight;
@@ -267,8 +267,8 @@ function estimateTextHeight(paragraphs: string[], colWidthMm: number): number {
 function fitTitleName(name: string, maxWidthMm: number): number {
   const maxFontSize = PDF.FONT_SIZE_NAME; // 36pt
   const minFontSize = 22;
-  const isUpperCase = name === name.toUpperCase();
-  const widthFactor = isUpperCase ? 1.15 : 1.0; // CAPS шире
+  // CSS text-transform: uppercase → всегда рендерим CAPS
+  const widthFactor = 1.15;
   for (let fs = maxFontSize; fs >= minFontSize; fs -= 2) {
     const charW = CHAR_WIDTH_MM * (fs / PDF.FONT_SIZE_BODY) * widthFactor;
     const charsPerLine = Math.floor(maxWidthMm / charW);
@@ -423,14 +423,14 @@ function computeMarginBottom(current: string, next: string | undefined, defaultM
   const curBulletHeader = isBulletHeader(current);
   const curSection = isSectionHeading(current);
 
-  // Секционный CAPS-заголовок → 2mm к следующему
-  if (curSection) return '2mm';
-
   // Заголовок списка ("Планировка:") перед буллетами → 0mm
   if (curBulletHeader && nextBullet) return '0mm';
 
   // Буллет → буллет: 0mm (плотный список)
   if (curBullet && nextBullet) return '0mm';
+
+  // Секционный CAPS-заголовок → 2mm к следующему (после bullet-проверок!)
+  if (curSection) return '2mm';
 
   // Буллет → обычный текст: полный отступ (пустая строка)
   if (curBullet && !nextBullet) return defaultMargin;
