@@ -269,16 +269,15 @@ function estimateTextHeight(paragraphs: string[], colWidthMm: number): number {
  */
 function fitTitleName(name: string, maxWidthMm: number): number {
   const maxFontSize = PDF.FONT_SIZE_NAME; // 36pt
-  const minFontSize = 18;
+  const minFontSize = 24; // не уменьшаем ниже 24pt — если не влезает, допускаем 2 строки
   // CSS font-weight:bold + text-transform:uppercase → кириллица BOLD CAPS значительно шире
-  // 1.8: bold (+15%) * uppercase (+40%) ≈ 1.61, плюс запас на широкие буквы (Щ, Ж, Ш)
   const widthFactor = 1.8;
   for (let fs = maxFontSize; fs >= minFontSize; fs--) {
     const charW = CHAR_WIDTH_MM * (fs / PDF.FONT_SIZE_BODY) * widthFactor;
     const charsPerLine = Math.floor(maxWidthMm / charW);
     if (name.length <= charsPerLine) return fs;
   }
-  // Даже при 18pt не влезает в одну строку → допускаем перенос
+  // При 24pt не влезает в одну строку → оставляем 24pt, допускаем перенос
   return minFontSize;
 }
 
