@@ -217,11 +217,9 @@ function fitTextToSlide(
   contentHeightMm: number = PDF.CONTENT_HEIGHT_MM,
 ): TextFitResult {
   const tiers: TextFitResult[] = [
-    { fontSize: 20, lineHeight: 1.2,  marginBottom: '8mm' },    // Tier 1: стандарт (пустая строка)
+    { fontSize: 20, lineHeight: 1.2,  marginBottom: '8mm' },    // Tier 1: стандарт
     { fontSize: 19, lineHeight: 1.15, marginBottom: '7mm' },    // Tier 2: чуть меньше
-    { fontSize: 18, lineHeight: 1.1,  marginBottom: '6mm' },    // Tier 3: компактнее
-    { fontSize: 17, lineHeight: 1.05, marginBottom: '5mm' },    // Tier 4: ещё компактнее
-    { fontSize: 16, lineHeight: 1.0,  marginBottom: '4mm' },    // Tier 5: крайний случай
+    { fontSize: 18, lineHeight: 1.1,  marginBottom: '6mm' },    // Tier 3: минимум → дальше перенос на след. слайд
   ];
 
   for (const tier of tiers) {
@@ -380,7 +378,10 @@ function renderContentSlide(paragraphs: string[], photos: Photo[], hlMap: Map<st
 
   const textHtml = paragraphs.map(p => {
     const hl = hlMap.get(p) ?? p;
-    return `<p class="body-p" style="font-size:${fit.fontSize}pt; line-height:${fit.lineHeight}; margin-bottom:${fit.marginBottom}">${hl.replace(/\n/g, '<br/>')}</p>`;
+    // Буллеты (• – -) — маленький отступ, обычные абзацы — полный
+    const isBullet = /^[\u2022\u2013\u2014\-–—]\s/.test(p);
+    const mb = isBullet ? '2mm' : fit.marginBottom;
+    return `<p class="body-p" style="font-size:${fit.fontSize}pt; line-height:${fit.lineHeight}; margin-bottom:${mb}">${hl.replace(/\n/g, '<br/>')}</p>`;
   }).join('');
 
   return `
@@ -410,7 +411,9 @@ function renderFullTextSlide(paragraphs: string[], hlMap: Map<string, string>): 
 
   const textHtml = paragraphs.map(p => {
     const hl = hlMap.get(p) ?? p;
-    return `<p class="body-p" style="font-size:${fontSize}pt; line-height:${fit.lineHeight}; margin-bottom:${fit.marginBottom}">${hl.replace(/\n/g, '<br/>')}</p>`;
+    const isBullet = /^[\u2022\u2013\u2014\-–—]\s/.test(p);
+    const mb = isBullet ? '2mm' : fit.marginBottom;
+    return `<p class="body-p" style="font-size:${fontSize}pt; line-height:${fit.lineHeight}; margin-bottom:${mb}">${hl.replace(/\n/g, '<br/>')}</p>`;
   }).join('');
 
   return `
@@ -494,7 +497,7 @@ const CSS = `
     line-height: 1.2; margin-bottom: 3mm; text-transform: uppercase;
   }
   .title-sub {
-    font-size: ${PDF.FONT_SIZE_SUB}pt; color: ${PDF.COLOR_TEXT}; line-height: 1.4; margin-bottom: 1.5mm;
+    font-size: ${PDF.FONT_SIZE_SUB}pt; color: ${PDF.COLOR_TEXT}; line-height: 1.2; margin-bottom: 1.5mm;
   }
   .price-badge {
     display: flex; align-items: center; justify-content: center;

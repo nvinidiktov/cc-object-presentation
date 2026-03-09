@@ -16,7 +16,10 @@ function estimateParagraphLines(paragraph: string, charsPerLine: number): number
   for (const line of hardLines) {
     totalLines += Math.max(1, Math.ceil(line.length / charsPerLine));
   }
-  return totalLines + PARAGRAPH_MARGIN_LINES;
+  // Буллеты (•, –, -) получают маленький отступ ≈ 2mm вместо 8mm
+  const isBullet = /^[\u2022\u2013\u2014\-–—]\s/.test(paragraph);
+  const marginLines = isBullet ? (2 / LINE_HEIGHT_MM) : PARAGRAPH_MARGIN_LINES;
+  return totalLines + marginLines;
 }
 
 /**
@@ -47,8 +50,9 @@ function splitOversizedParagraphs(
       result.push(para);
       continue;
     }
-    // Разрезаем на предложения: текст до .!? включительно + пробелы после
-    const sentences = para.match(/[^.!?]*[.!?]+[\s]*/g);
+    // Разрезаем на предложения: точка/!/? после которых идёт пробел + заглавная буква
+    // Не ломает "кв.м.", "т.д.", "д. 5" и подобные сокращения
+    const sentences = para.match(/[^.!?]*(?:[.!?]+(?=\s+[А-ЯA-Z«"(•\-–—])|[.!?]+\s*$)/g);
     if (!sentences) {
       // Нет знаков препинания — пушим как есть (жадный алгоритм выдаст warning)
       result.push(para);

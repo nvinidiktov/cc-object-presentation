@@ -53,8 +53,8 @@ export const PDF = {
   FONT_SIZE_TABLE_LABEL: 18, // Метки в таблице (Площадь, Этаж...)
   FONT_SIZE_TABLE_VALUE: 20, // Значения в таблице (45 м², 12 из 17...)
   FONT_SIZE_PRICE: 28,       // Стоимость в бейдже
-  FONT_SIZE_BULLET: 20,      // Буллеты преимуществ
-  FONT_SIZE_SUB: 20,         // Адрес, метро под названием
+  FONT_SIZE_BULLET: 19,      // Буллеты преимуществ
+  FONT_SIZE_SUB: 21,         // Адрес, метро под названием
   FONT_SIZE_BODY_MIN: 16,    // Минимальный шрифт при авто-сжатии (Tier 5)
   LINE_HEIGHT: 1.2,          // Основной межстрочный интервал
   LINE_HEIGHT_COMPACT: 1.05, // Компактный (для крайнего Tier авто-сжатия)
