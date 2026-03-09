@@ -332,21 +332,32 @@ function renderTitleSlide(property: Property, photos: Photo[]): string {
 // ─── Advantages slide ─────────────────────────────────────────────────────────
 
 function renderAdvantagesSlide(advantages: string[], photos: Photo[], hlMap: Map<string, string>): string {
-  // Многоуровневое сжатие для преимуществ
-  const totalLines = advantages.length * 1.8;
+  // Тиры шрифтов: 20 → 19 → 18pt (аналогично контентным слайдам)
+  const ADV_TIERS = [
+    { fontSize: 20, lineHeight: 1.2 },
+    { fontSize: 19, lineHeight: 1.15 },
+    { fontSize: 18, lineHeight: 1.1 },
+  ];
   const availableHeight = PDF.CONTENT_HEIGHT_MM * 0.85;
-  const lineHeightMm1 = PDF.FONT_SIZE_BULLET * 0.353 * PDF.LINE_HEIGHT;
-  const lineHeightMm2 = (PDF.FONT_SIZE_BULLET - 1) * 0.353 * PDF.LINE_HEIGHT;
-  const lineHeightMm3 = PDF.FONT_SIZE_BODY_MIN * 0.353 * PDF.LINE_HEIGHT_COMPACT;
 
-  let fontOverride: number = PDF.FONT_SIZE_BULLET;
-  let lhOverride: number = PDF.LINE_HEIGHT;
-  if (totalLines * lineHeightMm1 > availableHeight) {
-    fontOverride = PDF.FONT_SIZE_BULLET - 1;
-    if (totalLines * lineHeightMm2 > availableHeight) {
-      fontOverride = PDF.FONT_SIZE_BODY_MIN;
-      lhOverride = PDF.LINE_HEIGHT_COMPACT;
+  // Точная оценка высоты: считаем строки каждого буллета по ширине колонки
+  function advHeight(fontSize: number, lh: number): number {
+    const cw = CHAR_WIDTH_MM * (fontSize / PDF.FONT_SIZE_BODY);
+    const cpl = Math.floor(PDF.TEXT_COLUMN_WIDTH_MM / cw);
+    const lineHMm = fontSize * 0.353 * lh;
+    let h = 0;
+    for (const a of advantages) {
+      h += Math.max(1, Math.ceil(a.length / cpl)) * lineHMm;
     }
+    return h;
+  }
+
+  let fontOverride = ADV_TIERS[0].fontSize;
+  let lhOverride = ADV_TIERS[0].lineHeight;
+  for (const tier of ADV_TIERS) {
+    fontOverride = tier.fontSize;
+    lhOverride = tier.lineHeight;
+    if (advHeight(tier.fontSize, tier.lineHeight) <= availableHeight) break;
   }
 
   // Build list items with AI highlights, then cap evenly:

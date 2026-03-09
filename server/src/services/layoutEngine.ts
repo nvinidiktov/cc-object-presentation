@@ -219,6 +219,39 @@ function groupParagraphsIntoBlocks(paragraphs: string[]): TextBlock[] {
   return blocks;
 }
 
+// ─── Split oversized atomic blocks ──────────────────────────────────────────
+
+/**
+ * Разрезает слишком большие атомарные блоки (например, заголовок + 10 буллетов).
+ * Если атомарный блок не помещается при 20pt — разбиваем на подгруппы,
+ * каждая из которых помещается при 20pt.
+ */
+function splitOversizedBlocks(blocks: TextBlock[], colWidthMm: number): TextBlock[] {
+  const result: TextBlock[] = [];
+  for (const block of blocks) {
+    // Не-атомарные или помещающиеся блоки — оставляем как есть
+    if (!block.isAtomicGroup || fitsAtTier(block.paragraphs, colWidthMm, 0)) {
+      result.push(block);
+      continue;
+    }
+    // Атомарный блок слишком большой для 20pt — разрезаем по абзацам
+    let chunk: string[] = [];
+    for (const para of block.paragraphs) {
+      const candidate = [...chunk, para];
+      if (chunk.length > 0 && !fitsAtTier(candidate, colWidthMm, 0)) {
+        result.push({ paragraphs: chunk, isAtomicGroup: chunk.length > 1 });
+        chunk = [para];
+      } else {
+        chunk = candidate;
+      }
+    }
+    if (chunk.length > 0) {
+      result.push({ paragraphs: chunk, isAtomicGroup: chunk.length > 1 });
+    }
+  }
+  return result;
+}
+
 // ─── Main layout engine ──────────────────────────────────────────────────────
 
 export function buildLayout(
@@ -281,7 +314,9 @@ export function buildLayout(
   }
 
   // ─── Слайды с контентом: жадный алгоритм с атомарными блоками ──────────
-  const blocks = groupParagraphsIntoBlocks(allParagraphs);
+  const rawBlocks = groupParagraphsIntoBlocks(allParagraphs);
+  // Разрезаем слишком большие атомарные блоки (не влезающие при 20pt)
+  const blocks = splitOversizedBlocks(rawBlocks, PDF.TEXT_COLUMN_WIDTH_MM);
   let blockIndex = 0;
 
   while (blockIndex < blocks.length || regularPhotoIndex < regularPhotos.length) {

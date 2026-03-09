@@ -140,12 +140,15 @@ function maxPhotos(type: string): number {
 // ─── Индикатор заполненности ─────────────────────────────────────────────────
 
 function FillIndicator({ capacity }: { capacity: TextCapacity }) {
-  const { tier, fillPercent } = capacity;
+  const { tier, fillPercent, fits } = capacity;
 
-  // Зелёный → жёлтый → оранжевый (красного нет — ввод блокируется до него)
+  // Зелёный → жёлтый → оранжевый → красный (не помещается)
   let barColor = 'bg-green-400';
   let textColor = 'text-green-700';
-  if (tier >= 3) {
+  if (!fits) {
+    barColor = 'bg-red-500';
+    textColor = 'text-red-600';
+  } else if (tier >= 3) {
     barColor = 'bg-amber-400';
     textColor = 'text-amber-700';
   } else if (tier >= 2 || fillPercent > 70) {
@@ -155,7 +158,12 @@ function FillIndicator({ capacity }: { capacity: TextCapacity }) {
 
   const clampedPercent = Math.min(fillPercent, 100);
 
-  const tierLabel = tier >= 2 ? `Шрифт уменьшен (${tier}/3)` : '';
+  let tierLabel = '';
+  if (!fits) {
+    tierLabel = '⚠ Текст не помещается!';
+  } else if (tier >= 2) {
+    tierLabel = `Шрифт уменьшен (${tier}/3)`;
+  }
 
   return (
     <div className="mt-1.5 space-y-0.5">
@@ -251,10 +259,15 @@ const SlideEditorCard = React.memo(function SlideEditorCard({
       const rawParagraphs = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
       const cap = checkTextCapacity(rawParagraphs, colWidthMm);
       if (!cap.fits) {
-        e.target.value = lastValidText.current;
-        return;
+        // Блокируем только ДОБАВЛЕНИЕ текста; удаление всегда разрешаем
+        if (text.length > lastValidText.current.length) {
+          e.target.value = lastValidText.current;
+          return;
+        }
       }
-
+      if (cap.fits) {
+        lastValidText.current = text;
+      }
       onTextChange?.(slide.id, rawParagraphs);
     },
     [slide.id, onTextChange, colWidthMm]
@@ -316,22 +329,26 @@ const SlideEditorCard = React.memo(function SlideEditorCard({
           </div>
         );
 
-      case 'advantages':
+      case 'advantages': {
+        const advParagraphs = (property.advantages ?? []).map(a => `• ${a}`);
+        const advCapacity = checkTextCapacity(advParagraphs, PDF.TEXT_COLUMN_WIDTH_MM);
         return (
           <div className="flex gap-3">
             <div style={{ width: TEXT_COL_PCT, flexShrink: 0 }}>
               <div className="font-semibold text-gray-700 uppercase tracking-wide mb-1.5" style={{ fontSize: '14px' }}>
                 Преимущества
               </div>
-              <ul className="list-disc pl-4 text-gray-600 space-y-0.5" style={{ fontSize: '13px', lineHeight: 1.4 }}>
+              <ul className={`list-disc pl-4 text-gray-600 space-y-0.5 ${!advCapacity.fits ? 'text-red-600' : ''}`} style={{ fontSize: '13px', lineHeight: 1.4 }}>
                 {(property.advantages ?? []).map((a, i) => (
                   <li key={i}>{a}</li>
                 ))}
               </ul>
+              {advParagraphs.length > 0 && <FillIndicator capacity={advCapacity} />}
             </div>
             {renderPhotosColumn()}
           </div>
         );
+      }
 
       case 'content':
         return (
@@ -340,7 +357,9 @@ const SlideEditorCard = React.memo(function SlideEditorCard({
             <div style={{ width: TEXT_COL_PCT, flexShrink: 0 }}>
               <textarea
                 ref={textareaRef}
-                className="w-full text-gray-700 border border-gray-200 rounded p-2 resize-none focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400"
+                className={`w-full text-gray-700 border rounded p-2 resize-none focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400 ${
+                  !capacity.fits ? 'border-red-300 bg-red-50' : 'border-gray-200'
+                }`}
                 style={{ fontSize: '13px', lineHeight: '1.4', minHeight: 100 }}
                 value={textValue}
                 onChange={handleTextChange}
@@ -359,7 +378,7 @@ const SlideEditorCard = React.memo(function SlideEditorCard({
             <textarea
               ref={textareaRef}
               className={`w-full text-gray-700 border rounded p-2 resize-none focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400 ${
-                capacity.fillPercent > 100 ? 'border-red-300 bg-red-50' : 'border-gray-200'
+                !capacity.fits ? 'border-red-300 bg-red-50' : 'border-gray-200'
               }`}
               style={{ fontSize: '13px', lineHeight: '1.4', minHeight: 100 }}
               value={textValue}
