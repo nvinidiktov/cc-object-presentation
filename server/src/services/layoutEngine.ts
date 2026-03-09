@@ -83,7 +83,7 @@ const FIT_TIERS = [
 /**
  * Проверяет, помещается ли текст при конкретном tier-е шрифта.
  * tierIndex: 0 = 20pt (стандарт), 1 = 19pt, 2 = 18pt.
- * Порог 0.85 — чуть консервативнее рендерера (0.88), запас на погрешность.
+ * Порог 0.80 — консервативнее рендерера (0.88), 20% запас на погрешность шрифта.
  */
 function fitsAtTier(
   paragraphs: string[],
@@ -92,7 +92,7 @@ function fitsAtTier(
   contentHeightMm: number = PDF.CONTENT_HEIGHT_MM,
 ): boolean {
   const tier = FIT_TIERS[tierIndex];
-  const threshold = contentHeightMm * 0.85;
+  const threshold = contentHeightMm * 0.80;
   const adjustedCharWidth = CHAR_WIDTH_MM * (tier.fontSize / PDF.FONT_SIZE_BODY);
   const cpl = Math.floor(colWidthMm / adjustedCharWidth);
   const lineHeightMm = tier.fontSize * 0.353 * tier.lineHeight;
@@ -132,8 +132,31 @@ function canFitOnSlide(
 // ─── Auto-split oversized paragraphs by sentence boundaries ─────────────────
 
 /**
+ * Последний рубеж: разрезает абзац по границам слов.
+ * Используется когда предложения отсутствуют или одно предложение слишком длинное.
+ */
+function splitByWords(para: string, colWidthMm: number): string[] {
+  if (canFitOnSlide([para], colWidthMm)) return [para];
+  const words = para.split(/\s+/).filter(w => w.length > 0);
+  if (words.length <= 1) return [para];
+  const result: string[] = [];
+  let chunk = words[0];
+  for (let i = 1; i < words.length; i++) {
+    const candidate = chunk + ' ' + words[i];
+    if (!canFitOnSlide([candidate], colWidthMm)) {
+      if (chunk) result.push(chunk);
+      chunk = words[i];
+    } else {
+      chunk = candidate;
+    }
+  }
+  if (chunk) result.push(chunk);
+  return result.length > 0 ? result : [para];
+}
+
+/**
  * Если абзац не помещается на один слайд — разрезает его по границам предложений.
- * Каждый кусок гарантированно заканчивается полным предложением.
+ * Если предложений нет или одно предложение слишком длинное — разрезает по словам.
  */
 function splitOversizedParagraphs(
   paragraphs: string[],
@@ -149,7 +172,8 @@ function splitOversizedParagraphs(
     // Не ломает "кв.м.", "т.д.", "д. 5" и подобные сокращения
     const sentences = para.match(/[^.!?]*(?:[.!?]+(?=\s+[А-ЯA-Z«"(•\-–—])|[.!?]+\s*$)/g);
     if (!sentences) {
-      result.push(para);
+      // Нет границ предложений — разрезаем по словам
+      result.push(...splitByWords(para, colWidthMm));
       continue;
     }
     // Жадная упаковка предложений в куски, влезающие на слайд
@@ -157,13 +181,24 @@ function splitOversizedParagraphs(
     for (const sent of sentences) {
       const candidate = chunk + sent;
       if (chunk && !canFitOnSlide([candidate], colWidthMm)) {
-        result.push(chunk.trim());
+        // Проверяем текущий chunk — если одно предложение слишком длинное, режем по словам
+        if (canFitOnSlide([chunk.trim()], colWidthMm)) {
+          result.push(chunk.trim());
+        } else {
+          result.push(...splitByWords(chunk.trim(), colWidthMm));
+        }
         chunk = sent;
       } else {
         chunk = candidate;
       }
     }
-    if (chunk.trim()) result.push(chunk.trim());
+    if (chunk.trim()) {
+      if (canFitOnSlide([chunk.trim()], colWidthMm)) {
+        result.push(chunk.trim());
+      } else {
+        result.push(...splitByWords(chunk.trim(), colWidthMm));
+      }
+    }
   }
   return result;
 }
@@ -252,6 +287,39 @@ function splitOversizedBlocks(blocks: TextBlock[], colWidthMm: number): TextBloc
   return result;
 }
 
+// ─── Final safety: ensure every block fits at some tier ──────────────────────
+
+/**
+ * Финальная проверка: каждый блок ОБЯЗАН помещаться хотя бы при 18pt.
+ * Если нет — разбиваем на отдельные абзацы, затем по предложениям/словам.
+ * Гарантирует: текст НИКОГДА не будет обрезан на слайде.
+ */
+function ensureAllBlocksFit(blocks: TextBlock[], colWidthMm: number): TextBlock[] {
+  const result: TextBlock[] = [];
+  for (const block of blocks) {
+    if (canFitOnSlide(block.paragraphs, colWidthMm)) {
+      result.push(block);
+      continue;
+    }
+    // Блок не влезает ни при каком размере шрифта
+    if (block.paragraphs.length > 1) {
+      // Разбиваем на отдельные абзацы и проверяем каждый
+      const singles = block.paragraphs.map(p => ({
+        paragraphs: [p],
+        isAtomicGroup: false,
+      }));
+      result.push(...ensureAllBlocksFit(singles, colWidthMm));
+    } else {
+      // Один абзац — разрезаем по предложениям/словам
+      const splits = splitOversizedParagraphs(block.paragraphs, colWidthMm);
+      for (const s of splits) {
+        result.push({ paragraphs: [s], isAtomicGroup: false });
+      }
+    }
+  }
+  return result;
+}
+
 // ─── Main layout engine ──────────────────────────────────────────────────────
 
 export function buildLayout(
@@ -316,7 +384,9 @@ export function buildLayout(
   // ─── Слайды с контентом: жадный алгоритм с атомарными блоками ──────────
   const rawBlocks = groupParagraphsIntoBlocks(allParagraphs);
   // Разрезаем слишком большие атомарные блоки (не влезающие при 20pt)
-  const blocks = splitOversizedBlocks(rawBlocks, PDF.TEXT_COLUMN_WIDTH_MM);
+  const splitBlocks = splitOversizedBlocks(rawBlocks, PDF.TEXT_COLUMN_WIDTH_MM);
+  // Финальная гарантия: каждый блок помещается хотя бы при 18pt
+  const blocks = ensureAllBlocksFit(splitBlocks, PDF.TEXT_COLUMN_WIDTH_MM);
   let blockIndex = 0;
 
   while (blockIndex < blocks.length || regularPhotoIndex < regularPhotos.length) {
