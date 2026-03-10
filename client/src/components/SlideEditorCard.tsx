@@ -27,7 +27,12 @@ function isSectionHeading(text: string): boolean {
   const letters = trimmed.replace(/[^a-zA-Zа-яА-ЯёЁ]/g, '');
   return letters.length >= 3 && letters === letters.toUpperCase() && letters !== letters.toLowerCase();
 }
-function isBulletHeader(text: string): boolean { return HEADER_COLON_RE.test(text.trim()); }
+function isBulletHeader(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (HEADER_COLON_RE.test(trimmed)) return true;
+  return !/[.!?]$/.test(trimmed);
+}
 
 /** Склейка абзацев для textarea: буллеты через \n, обычные абзацы через \n\n */
 function smartJoinParagraphs(paragraphs: string[]): string {

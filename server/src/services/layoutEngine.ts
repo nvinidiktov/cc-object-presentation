@@ -22,9 +22,12 @@ function isSectionHeading(text: string): boolean {
   return letters.length >= 3 && letters === letters.toUpperCase() && letters !== letters.toLowerCase();
 }
 
-/** Заголовок перед буллетами: строка заканчивается на ":" */
+/** Заголовок/подводка перед буллетами: ":" или любой текст без точки/!/? на конце */
 function isBulletHeader(text: string): boolean {
-  return HEADER_COLON_RE.test(text.trim());
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (HEADER_COLON_RE.test(trimmed)) return true;
+  return !/[.!?]$/.test(trimmed);
 }
 
 /**
