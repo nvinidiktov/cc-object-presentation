@@ -68,13 +68,13 @@ export const PDF = {
 export const LINE_HEIGHT_MM = 8.5;
 
 // Средняя ширина символа пропорционального Inter 20pt (кириллица)
-// Inter чуть шире Arial: ~0.43 × em, em ≈ 7.06mm → ~3.05mm
-export const CHAR_WIDTH_MM = 3.05;
+// Кириллица ~15% шире латиницы: ~0.51 × em, em ≈ 7.06mm → ~3.6mm
+export const CHAR_WIDTH_MM = 3.6;
 
 // Вычисляем, сколько символов/строк влезает в текстовую колонку
 export const MAX_LINES_CONTENT = Math.floor(PDF.CONTENT_HEIGHT_MM / LINE_HEIGHT_MM);
-export const CHARS_PER_LINE_CONTENT = Math.floor(PDF.TEXT_COLUMN_WIDTH_MM / CHAR_WIDTH_MM); // ~46
-export const CHARS_PER_LINE_FULLTEXT = Math.floor(PDF.CONTENT_WIDTH_MM / CHAR_WIDTH_MM);   // ~97
+export const CHARS_PER_LINE_CONTENT = Math.floor(PDF.TEXT_COLUMN_WIDTH_MM / CHAR_WIDTH_MM); // ~37
+export const CHARS_PER_LINE_FULLTEXT = Math.floor(PDF.CONTENT_WIDTH_MM / CHAR_WIDTH_MM);   // ~78
 
 // ─── Utility: форматирование цены (разбивка по разрядам) ─────────────────────
 
