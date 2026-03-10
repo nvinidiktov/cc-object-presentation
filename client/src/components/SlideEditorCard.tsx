@@ -46,7 +46,8 @@ function smartJoinParagraphs(paragraphs: string[]): string {
 
 interface TextCapacity {
   tier: number;       // 1-3 (какой тир нужен), 0 = не помещается
-  fillPercent: number; // % заполненности при Tier 1
+  fontSize: number;   // реальный размер шрифта: 20, 19 или 18
+  fillPercent: number; // % заполненности при ТЕКУЩЕМ тире
   fits: boolean;       // помещается ли в Tier 1-3 (до 18pt)
 }
 
@@ -74,22 +75,23 @@ function estimateHeight(paragraphs: string[], colWidthMm: number, tier: typeof T
 }
 
 function checkTextCapacity(paragraphs: string[], colWidthMm: number): TextCapacity {
-  // Порог ниже чем в PDF (0.88) — запас чтобы текст точно поместился
+  // Порог совпадает с layout engine (0.80) — запас на погрешность шрифта
   const maxH = PDF.CONTENT_HEIGHT_MM * 0.80;
 
-  // Заполненность при Tier 1 (стандартный шрифт)
-  const tier1Height = estimateHeight(paragraphs, colWidthMm, TEXT_TIERS[0]);
-  const fillPercent = maxH > 0 ? Math.round((tier1Height / maxH) * 100) : 0;
-
-  // Определяем, какой тир нужен
+  // Проходим по тирам: находим первый где текст помещается
   for (let i = 0; i < TEXT_TIERS.length; i++) {
     const h = estimateHeight(paragraphs, colWidthMm, TEXT_TIERS[i]);
+    const fillPercent = maxH > 0 ? Math.round((h / maxH) * 100) : 0;
     if (h <= maxH) {
-      return { tier: i + 1, fillPercent, fits: true };
+      return { tier: i + 1, fontSize: TEXT_TIERS[i].fontSize, fillPercent, fits: true };
     }
   }
 
-  return { tier: 0, fillPercent, fits: false };
+  // Не помещается даже при 18pt — показываем заполненность при 18pt
+  const lastTier = TEXT_TIERS[TEXT_TIERS.length - 1];
+  const h = estimateHeight(paragraphs, colWidthMm, lastTier);
+  const fillPercent = maxH > 0 ? Math.round((h / maxH) * 100) : 0;
+  return { tier: 0, fontSize: lastTier.fontSize, fillPercent, fits: false };
 }
 
 // ─── Метки типов слайдов ─────────────────────────────────────────────────────
@@ -140,30 +142,35 @@ function maxPhotos(type: string): number {
 // ─── Индикатор заполненности ─────────────────────────────────────────────────
 
 function FillIndicator({ capacity }: { capacity: TextCapacity }) {
-  const { tier, fillPercent, fits } = capacity;
+  const { tier, fontSize, fillPercent, fits } = capacity;
 
-  // Зелёный → жёлтый → оранжевый → красный (не помещается)
-  let barColor = 'bg-green-400';
-  let textColor = 'text-green-700';
+  // Цвета: зелёный (20pt) → жёлтый (19pt) → оранжевый (18pt) → красный (не влезает)
+  let barColor: string;
+  let textColor: string;
+  let rightLabel: string;
+
   if (!fits) {
     barColor = 'bg-red-500';
     textColor = 'text-red-600';
-  } else if (tier >= 3) {
-    barColor = 'bg-amber-400';
-    textColor = 'text-amber-700';
-  } else if (tier >= 2 || fillPercent > 70) {
+    rightLabel = `⚠ Не помещается · ${fontSize}pt`;
+  } else if (tier === 3) {
+    // 18pt — оранжевый, почти максимум
+    barColor = 'bg-orange-400';
+    textColor = 'text-orange-700';
+    rightLabel = `Шрифт ${fontSize}pt`;
+  } else if (tier === 2) {
+    // 19pt — жёлтый
     barColor = 'bg-yellow-400';
     textColor = 'text-yellow-700';
+    rightLabel = `Шрифт ${fontSize}pt`;
+  } else {
+    // 20pt — зелёный, стандарт
+    barColor = 'bg-green-400';
+    textColor = 'text-green-700';
+    rightLabel = '';
   }
 
   const clampedPercent = Math.min(fillPercent, 100);
-
-  let tierLabel = '';
-  if (!fits) {
-    tierLabel = '⚠ Текст не помещается!';
-  } else if (tier >= 2) {
-    tierLabel = `Шрифт уменьшен (${tier}/3)`;
-  }
 
   return (
     <div className="mt-1.5 space-y-0.5">
@@ -177,7 +184,7 @@ function FillIndicator({ capacity }: { capacity: TextCapacity }) {
       {/* Текст */}
       <div className={`flex justify-between text-[10px] ${textColor}`}>
         <span>{fillPercent}% заполнено</span>
-        {tierLabel && <span className="font-medium">{tierLabel}</span>}
+        {rightLabel && <span className="font-medium">{rightLabel}</span>}
       </div>
     </div>
   );
