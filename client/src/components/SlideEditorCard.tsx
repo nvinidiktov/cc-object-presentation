@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useEffect, useMemo } from 'react';
+import React, { useCallback, useRef, useEffect, useMemo, useState } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Slide, Photo, Property, PDF, CHAR_WIDTH_MM } from 'shared';
@@ -44,10 +44,15 @@ function smartJoinParagraphs(paragraphs: string[]): string {
   return result;
 }
 
+/** Парсинг текста textarea в абзацы (для layout engine) */
+function textToParagraphs(text: string): string[] {
+  return text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+}
+
 interface TextCapacity {
   tier: number;       // 1-3 (какой тир нужен), 0 = не помещается
   fontSize: number;   // реальный размер шрифта: 20, 19 или 18
-  fillPercent: number; // % заполненности при ТЕКУЩЕМ тире
+  fills: number[];    // % заполненности при каждом тире [20pt, 19pt, 18pt]
   fits: boolean;       // помещается ли в Tier 1-3 (до 18pt)
 }
 
@@ -78,20 +83,20 @@ function checkTextCapacity(paragraphs: string[], colWidthMm: number): TextCapaci
   // Порог совпадает с layout engine (0.80) — запас на погрешность шрифта
   const maxH = PDF.CONTENT_HEIGHT_MM * 0.80;
 
-  // Проходим по тирам: находим первый где текст помещается
+  // Считаем заполненность при КАЖДОМ тире
+  const fills = TEXT_TIERS.map(tier => {
+    const h = estimateHeight(paragraphs, colWidthMm, tier);
+    return maxH > 0 ? Math.round((h / maxH) * 100) : 0;
+  });
+
+  // Находим первый тир где помещается
   for (let i = 0; i < TEXT_TIERS.length; i++) {
-    const h = estimateHeight(paragraphs, colWidthMm, TEXT_TIERS[i]);
-    const fillPercent = maxH > 0 ? Math.round((h / maxH) * 100) : 0;
-    if (h <= maxH) {
-      return { tier: i + 1, fontSize: TEXT_TIERS[i].fontSize, fillPercent, fits: true };
+    if (fills[i] <= 100) {
+      return { tier: i + 1, fontSize: TEXT_TIERS[i].fontSize, fills, fits: true };
     }
   }
 
-  // Не помещается даже при 18pt — показываем заполненность при 18pt
-  const lastTier = TEXT_TIERS[TEXT_TIERS.length - 1];
-  const h = estimateHeight(paragraphs, colWidthMm, lastTier);
-  const fillPercent = maxH > 0 ? Math.round((h / maxH) * 100) : 0;
-  return { tier: 0, fontSize: lastTier.fontSize, fillPercent, fits: false };
+  return { tier: 0, fontSize: 18, fills, fits: false };
 }
 
 // ─── Метки типов слайдов ─────────────────────────────────────────────────────
@@ -142,35 +147,35 @@ function maxPhotos(type: string): number {
 // ─── Индикатор заполненности ─────────────────────────────────────────────────
 
 function FillIndicator({ capacity }: { capacity: TextCapacity }) {
-  const { tier, fontSize, fillPercent, fits } = capacity;
+  const { tier, fills, fits } = capacity;
+  const [f20, f19, f18] = fills;
 
-  // Цвета: зелёный (20pt) → жёлтый (19pt) → оранжевый (18pt) → красный (не влезает)
+  // Цвет полоски по текущему тиру
   let barColor: string;
-  let textColor: string;
-  let rightLabel: string;
-
+  let barPercent: number;
   if (!fits) {
     barColor = 'bg-red-500';
-    textColor = 'text-red-600';
-    rightLabel = `⚠ Не помещается · ${fontSize}pt`;
+    barPercent = 100;
   } else if (tier === 3) {
-    // 18pt — оранжевый, почти максимум
     barColor = 'bg-orange-400';
-    textColor = 'text-orange-700';
-    rightLabel = `Шрифт ${fontSize}pt`;
+    barPercent = Math.min(f18, 100);
   } else if (tier === 2) {
-    // 19pt — жёлтый
     barColor = 'bg-yellow-400';
-    textColor = 'text-yellow-700';
-    rightLabel = `Шрифт ${fontSize}pt`;
+    barPercent = Math.min(f19, 100);
   } else {
-    // 20pt — зелёный, стандарт
     barColor = 'bg-green-400';
-    textColor = 'text-green-700';
-    rightLabel = '';
+    barPercent = Math.min(f20, 100);
   }
 
-  const clampedPercent = Math.min(fillPercent, 100);
+  // Цвет каждой метки: зелёный/жёлтый/оранжевый если влезает, красный если нет
+  const c20 = f20 <= 100 ? 'text-green-600' : 'text-gray-400';
+  const c19 = f19 <= 100 ? (f20 > 100 ? 'text-yellow-600' : 'text-gray-400') : 'text-gray-400';
+  const c18 = f18 <= 100 ? (f19 > 100 ? 'text-orange-600' : 'text-gray-400') : 'text-red-600';
+
+  // Подчёркиваем активный тир
+  const bold20 = tier === 1 ? 'font-bold' : '';
+  const bold19 = tier === 2 ? 'font-bold' : '';
+  const bold18 = tier === 3 || !fits ? 'font-bold' : '';
 
   return (
     <div className="mt-1.5 space-y-0.5">
@@ -178,13 +183,15 @@ function FillIndicator({ capacity }: { capacity: TextCapacity }) {
       <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all duration-200 ${barColor}`}
-          style={{ width: `${clampedPercent}%` }}
+          style={{ width: `${barPercent}%` }}
         />
       </div>
-      {/* Текст */}
-      <div className={`flex justify-between text-[10px] ${textColor}`}>
-        <span>{fillPercent}% заполнено</span>
-        {rightLabel && <span className="font-medium">{rightLabel}</span>}
+      {/* Три тира */}
+      <div className="flex gap-3 text-[10px]">
+        <span className={`${c20} ${bold20}`}>20pt: {f20}%</span>
+        <span className={`${c19} ${bold19}`}>19pt: {f19}%</span>
+        <span className={`${c18} ${bold18}`}>18pt: {f18}%</span>
+        {!fits && <span className="text-red-600 font-bold ml-auto">⚠ Не помещается!</span>}
       </div>
     </div>
   );
@@ -230,52 +237,63 @@ const SlideEditorCard = React.memo(function SlideEditorCard({
   const photos = slide.photoIds.map(id => photoMap.get(id)).filter(Boolean) as Photo[];
   const slots = maxPhotos(slide.type);
 
+  // ─── Локальный текст textarea (не round-trip через paragraphs) ──────────
+  const initialText = useMemo(
+    () => smartJoinParagraphs(slide.paragraphs ?? []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [slide.id] // Только при смене слайда (регенерация), не при каждом изменении
+  );
+  const [localText, setLocalText] = useState(initialText);
+  const lastValidText = useRef(initialText);
+
+  // Сброс при регенерации слайдов (новый slide.id)
+  useEffect(() => {
+    const newText = smartJoinParagraphs(slide.paragraphs ?? []);
+    setLocalText(newText);
+    lastValidText.current = newText;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slide.id]);
+
   // Автоподстройка высоты textarea
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const textValue = smartJoinParagraphs(slide.paragraphs ?? []);
-  const lastValidText = useRef(textValue);
-
   useEffect(() => {
     const el = textareaRef.current;
     if (el) {
       el.style.height = 'auto';
       el.style.height = `${el.scrollHeight}px`;
     }
-  }, [textValue]);
+  }, [localText]);
 
   // Определяем ширину колонки для текущего типа слайда
   const colWidthMm = slide.type === 'full-text' ? PDF.CONTENT_WIDTH_MM : PDF.TEXT_COLUMN_WIDTH_MM;
 
-  // Оценка заполненности
-  const capacity = useMemo(
-    () => checkTextCapacity(slide.paragraphs ?? [], colWidthMm),
-    [slide.paragraphs, colWidthMm]
-  );
-
-  // Запоминаем последний валидный текст
-  useEffect(() => {
-    if (capacity.fits) {
-      lastValidText.current = textValue;
-    }
-  }, [textValue, capacity.fits]);
+  // Оценка заполненности (по локальному тексту)
+  const capacity = useMemo(() => {
+    const paras = textToParagraphs(localText);
+    return checkTextCapacity(paras, colWidthMm);
+  }, [localText, colWidthMm]);
 
   const handleTextChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       const text = e.target.value;
-      // Разделяем на абзацы: каждая строка = абзац (согласованно с layout engine)
-      const rawParagraphs = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-      const cap = checkTextCapacity(rawParagraphs, colWidthMm);
+      const paras = textToParagraphs(text);
+      const cap = checkTextCapacity(paras, colWidthMm);
+
       if (!cap.fits) {
-        // Блокируем только ДОБАВЛЕНИЕ текста; удаление всегда разрешаем
-        if (text.length > lastValidText.current.length) {
-          e.target.value = lastValidText.current;
+        // Блокируем только если КОНТЕНТ вырос (не пробелы/enter)
+        const prevContent = textToParagraphs(lastValidText.current).join('').length;
+        const newContent = paras.join('').length;
+        if (newContent > prevContent) {
+          // Реальный контент добавился — блокируем
           return;
         }
       }
+
+      setLocalText(text);
       if (cap.fits) {
         lastValidText.current = text;
       }
-      onTextChange?.(slide.id, rawParagraphs);
+      onTextChange?.(slide.id, paras);
     },
     [slide.id, onTextChange, colWidthMm]
   );
@@ -368,11 +386,11 @@ const SlideEditorCard = React.memo(function SlideEditorCard({
                   !capacity.fits ? 'border-red-300 bg-red-50' : 'border-gray-200'
                 }`}
                 style={{ fontSize: '13px', lineHeight: '1.4', minHeight: 100 }}
-                value={textValue}
+                value={localText}
                 onChange={handleTextChange}
                 placeholder="Текст слайда..."
               />
-              {textValue.trim() && <FillIndicator capacity={capacity} />}
+              {localText.trim() && <FillIndicator capacity={capacity} />}
             </div>
             {/* 2 фото вертикально */}
             {renderPhotosColumn()}
@@ -388,11 +406,11 @@ const SlideEditorCard = React.memo(function SlideEditorCard({
                 !capacity.fits ? 'border-red-300 bg-red-50' : 'border-gray-200'
               }`}
               style={{ fontSize: '13px', lineHeight: '1.4', minHeight: 100 }}
-              value={textValue}
+              value={localText}
               onChange={handleTextChange}
               placeholder="Текст слайда..."
             />
-            {textValue.trim() && <FillIndicator capacity={capacity} />}
+            {localText.trim() && <FillIndicator capacity={capacity} />}
           </div>
         );
 
