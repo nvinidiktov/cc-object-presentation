@@ -244,12 +244,14 @@ const SlideEditorCard = React.memo(function SlideEditorCard({
     [slide.id] // Только при смене слайда (регенерация), не при каждом изменении
   );
   const [localText, setLocalText] = useState(initialText);
+  const localTextRef = useRef(initialText);
   const lastValidText = useRef(initialText);
 
   // Сброс при регенерации слайдов (новый slide.id)
   useEffect(() => {
     const newText = smartJoinParagraphs(slide.paragraphs ?? []);
     setLocalText(newText);
+    localTextRef.current = newText;
     lastValidText.current = newText;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slide.id]);
@@ -280,16 +282,16 @@ const SlideEditorCard = React.memo(function SlideEditorCard({
       const cap = checkTextCapacity(paras, colWidthMm);
 
       if (!cap.fits) {
-        // Блокируем только если КОНТЕНТ вырос (не пробелы/enter)
-        const prevContent = textToParagraphs(lastValidText.current).join('').length;
-        const newContent = paras.join('').length;
-        if (newContent > prevContent) {
-          // Реальный контент добавился — блокируем
+        // Блокируем если добавились НЕ-пробельные символы (разрешаем Enter, пробел, удаление)
+        const prevNonWs = localTextRef.current.replace(/\s/g, '').length;
+        const newNonWs = text.replace(/\s/g, '').length;
+        if (newNonWs > prevNonWs) {
           return;
         }
       }
 
       setLocalText(text);
+      localTextRef.current = text;
       if (cap.fits) {
         lastValidText.current = text;
       }
@@ -385,7 +387,7 @@ const SlideEditorCard = React.memo(function SlideEditorCard({
                 className={`w-full text-gray-700 border rounded p-2 resize-none focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400 ${
                   !capacity.fits ? 'border-red-300 bg-red-50' : 'border-gray-200'
                 }`}
-                style={{ fontSize: '13px', lineHeight: '1.4', minHeight: 100 }}
+                style={{ fontSize: '13px', lineHeight: '1.4', minHeight: 100, overflowWrap: 'break-word', wordBreak: 'break-all' }}
                 value={localText}
                 onChange={handleTextChange}
                 placeholder="Текст слайда..."
@@ -405,7 +407,7 @@ const SlideEditorCard = React.memo(function SlideEditorCard({
               className={`w-full text-gray-700 border rounded p-2 resize-none focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400 ${
                 !capacity.fits ? 'border-red-300 bg-red-50' : 'border-gray-200'
               }`}
-              style={{ fontSize: '13px', lineHeight: '1.4', minHeight: 100 }}
+              style={{ fontSize: '13px', lineHeight: '1.4', minHeight: 100, overflowWrap: 'break-word', wordBreak: 'break-all' }}
               value={localText}
               onChange={handleTextChange}
               placeholder="Текст слайда..."

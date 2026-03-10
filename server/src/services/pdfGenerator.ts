@@ -82,7 +82,7 @@ interface HLPos {
  * 3. If > max — divide text into `max` equal zones, pick best from each
  * 4. Enforce minimum spacing between selected highlights
  */
-function capHighlights(html: string, max: number): string {
+function capHighlights(html: string, max: number, minSpacing: number = HL_MIN_SPACING): string {
   // Parse all highlight positions
   const tagRegex = /<[^>]+>/g;
   const spanRegex = /<span class="kw">(.*?)<\/span>/g;
@@ -103,10 +103,10 @@ function capHighlights(html: string, max: number): string {
   if (highlights.length <= max) {
     // Keep all but enforce minimum spacing
     selected = new Set(highlights.map(h => h.idx));
-    enforceSpacing(highlights, selected, HL_MIN_SPACING);
+    if (minSpacing > 0) enforceSpacing(highlights, selected, minSpacing);
   } else {
     // Select evenly spaced subset
-    selected = selectEvenlySpaced(highlights, max, plainLen, HL_MIN_SPACING);
+    selected = selectEvenlySpaced(highlights, max, plainLen, minSpacing);
   }
 
   // Rebuild: keep selected, strip tag from others
@@ -369,7 +369,7 @@ function renderAdvantagesSlide(advantages: string[], photos: Photo[], hlMap: Map
   //   3 items → 2, 4 → 2, 5 → 3, 6 → 3, 7 → 4, 8 → 4
   const advItemsHtml = advantages.map(a => `<li class="adv-item">${hlMap.get(a) ?? a}</li>`).join('');
   const hlCap = Math.max(2, Math.ceil(advantages.length / 2));
-  const cappedAdvItemsHtml = capHighlights(advItemsHtml, hlCap);
+  const cappedAdvItemsHtml = capHighlights(advItemsHtml, hlCap, 0);
 
   return `
     <div class="slide">
